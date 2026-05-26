@@ -102,7 +102,6 @@ fn append_menksoft_word(output: &mut Vec<u32>, word: &[u32]) {
         return;
     }
 
-    let mut previous_was_letter = false;
     for (index, &cp) in word.iter().enumerate() {
         if menksoft::is_space(cp) {
             let next_is_letter = word
@@ -115,25 +114,104 @@ fn append_menksoft_word(output: &mut Vec<u32>, word: &[u32]) {
             } else {
                 mongol::SPACE
             });
-            previous_was_letter = false;
+            continue;
+        }
+
+        if append_menksoft_variant(output, word, index, cp) {
             continue;
         }
 
         let Some(mapped) = menksoft::to_unicode_nominal(cp) else {
             output.push(cp);
-            previous_was_letter = false;
             continue;
         };
 
-        // Menksoft encodes some standalone final/medial glyphs.  For tokenizer
-        // normalization, keep the nominal character and avoid inserting Nirugu
-        // unless the glyph is explicitly a separator/punctuation.
-        if previous_was_letter && menksoft::is_initial_isolate_glyph(cp) {
-            output.push(mongol::SPACE);
-        }
         output.extend_from_slice(mapped);
-        previous_was_letter = menksoft::is_letter(cp);
     }
+}
+
+fn append_menksoft_variant(output: &mut Vec<u32>, word: &[u32], index: usize, cp: u32) -> bool {
+    let above = previous_codepoint(word, index);
+    let below = word.get(index + 1).copied().unwrap_or(0);
+    let word_len = word.iter().filter(|&&c| !menksoft::is_space(c)).count();
+
+    match cp {
+        // Contextual MVS + A/E presentation glyphs.
+        0xE26A if menksoft::is_letter(above) => push_all(output, &[mongol::MVS, mongol::A]),
+        0xE274 if menksoft::is_letter(above) => push_all(output, &[mongol::MVS, mongol::E]),
+
+        // Straight medial YA is dropped in vowel + YI diphthongs; otherwise it
+        // carries FVS1.
+        0xE321 if menksoft::is_vowel(above) && menksoft::is_long_tooth_i(below) => true,
+        0xE321 => push_all(output, &[mongol::YA, mongol::FVS1]),
+        0xE27E | 0xE27F if menksoft::is_i(above) => true,
+        0xE27E | 0xE27F if menksoft::is_a(above) && menksoft::is_m(below) => {
+            push_all(output, &[mongol::I, mongol::FVS3])
+        }
+
+        // Common final or medial variation selectors from GB/T presentation
+        // glyphs.
+        0xE286 | 0xE288 => push_all(output, &[mongol::O, mongol::FVS1]),
+        0xE285 if word_len == 2 => push_all(output, &[mongol::O, mongol::FVS2]),
+        0xE28D if word_len == 2 => push_all(output, &[mongol::U, mongol::FVS2]),
+        0xE296 if word_len == 2 => push_all(output, &[mongol::OE, mongol::FVS3]),
+        0xE2A3 if word_len == 2 => push_all(output, &[mongol::UE, mongol::FVS3]),
+        0xE2A8 => push_all(output, &[mongol::UE, mongol::FVS2]),
+
+        // Dotted D/G/N variants that the nominal table intentionally flattens.
+        0xE310 if matches!(below, 0xE2A8 | 0xE2A9) => push_all(output, &[mongol::DA, mongol::FVS1]),
+        0xE312 => push_all(output, &[mongol::DA, mongol::FVS1]),
+        0xE313 if menksoft::is_consonant(below) => push_all(output, &[mongol::DA, mongol::FVS1]),
+        0xE30C | 0xE30D => push_all(output, &[mongol::TA, mongol::FVS1]),
+        0xE2B8 | 0xE2BA | 0xE2C0 if menksoft::is_vowel(above) && menksoft::is_vowel(below) => {
+            push_all(output, &[mongol::NA, mongol::FVS2])
+        }
+        0xE2B7 | 0xE2B9 | 0xE2BF if menksoft::is_consonant(below) => {
+            push_all(output, &[mongol::NA, mongol::FVS1])
+        }
+        0xE2E7 => push_all(output, &[mongol::GA, mongol::FVS1]),
+        0xE2E8 if index + 1 == word.len() && last_non_i_vowel_is_masculine(word, index) => {
+            push_all(output, &[mongol::GA, mongol::FVS2])
+        }
+        0xE2EB | 0xE2ED | 0xE2EF | 0xE2F0
+            if menksoft::word_contains_masculine_vowel(word)
+                && !menksoft::is_feminine_vowel_or_i(below)
+                && (menksoft::is_vowel(above) || menksoft::is_vowel(below)) =>
+        {
+            push_all(output, &[mongol::GA, mongol::FVS2])
+        }
+        0xE2A9 | 0xE2AA if output.len() > 2 => push_all(output, &[mongol::UE, mongol::FVS1]),
+
+        _ => false,
+    }
+}
+
+fn last_non_i_vowel_is_masculine(word: &[u32], index: usize) -> bool {
+    word[..index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&cp| menksoft::is_vowel(cp) && !menksoft::is_i(cp))
+        .map(menksoft::is_masculine_vowel)
+        .unwrap_or(false)
+}
+
+fn previous_codepoint(word: &[u32], index: usize) -> u32 {
+    if index == 0 {
+        return 0;
+    }
+
+    word[..index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&cp| !menksoft::is_space(cp))
+        .unwrap_or(0)
+}
+
+fn push_all(output: &mut Vec<u32>, codepoints: &[u32]) -> bool {
+    output.extend_from_slice(codepoints);
+    true
 }
 
 fn normalize_non_menksoft_codepoint(codepoint: u32) -> u32 {
