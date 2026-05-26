@@ -23,6 +23,7 @@ class MultimodalProcessorTest(unittest.TestCase):
         processor = MultimodalProcessor(build_fake_tokenizer())
         out = processor(
             IMAGE_PLACEHOLDER + " test " + IMAGE_PLACEHOLDER,
+            images=["img1", "img2"],
             image_sizes=[(14, 14), (28, 28)],
         )
         self.assertEqual(len(out.image_token_spans), 2)
@@ -35,7 +36,7 @@ class MultimodalProcessorTest(unittest.TestCase):
 
     def test_image_token_spans_are_input_id_ranges(self):
         processor = MultimodalProcessor(build_fake_tokenizer())
-        out = processor(IMAGE_PLACEHOLDER, image_sizes=[(28, 28)])
+        out = processor(IMAGE_PLACEHOLDER, images=["img"], image_sizes=[(28, 28)])
         start, end = out.image_token_spans[0]
         span_tokens = out.tokens[start:end]
         self.assertEqual([tok.token for tok in span_tokens], [IMAGE_START, IMAGE_PATCH, IMAGE_END])
@@ -50,9 +51,18 @@ class MultimodalProcessorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             processor(IMAGE_PLACEHOLDER + " " + IMAGE_PLACEHOLDER, image_sizes=[(28, 28)])
 
+    def test_image_count_mismatch_raises(self):
+        processor = MultimodalProcessor(build_fake_tokenizer())
+        with self.assertRaises(ValueError):
+            processor(IMAGE_PLACEHOLDER, images=[])
+        with self.assertRaises(ValueError):
+            processor(IMAGE_PLACEHOLDER, images=["a", "b"])
+        with self.assertRaises(ValueError):
+            processor("test", images=["orphan"])
+
     def test_attention_mask_matches_input_ids(self):
         processor = MultimodalProcessor(build_fake_tokenizer())
-        out = processor("hello " + IMAGE_PLACEHOLDER, image_sizes=[(28, 28)])
+        out = processor("hello " + IMAGE_PLACEHOLDER, images=["img"], image_sizes=[(28, 28)])
         self.assertEqual(len(out.attention_mask), len(out.input_ids))
         self.assertTrue(all(m == 1 for m in out.attention_mask))
 
@@ -60,6 +70,7 @@ class MultimodalProcessorTest(unittest.TestCase):
         processor = MultimodalProcessor(build_fake_tokenizer())
         out = processor(
             IMAGE_PLACEHOLDER + " test " + IMAGE_PLACEHOLDER,
+            images=["img1", "img2"],
             image_sizes=[(14, 14), (14, 14)],
         )
         # Collect image_index values from start markers
@@ -72,7 +83,7 @@ class MultimodalProcessorTest(unittest.TestCase):
         from Tokenizer.multimodal import VIDEO_END, VIDEO_PATCH, VIDEO_PLACEHOLDER, VIDEO_START
 
         processor = MultimodalProcessor(build_fake_tokenizer())
-        out = processor(VIDEO_PLACEHOLDER, video_sizes=[(2, 28, 28)])
+        out = processor(VIDEO_PLACEHOLDER, videos=["vid"], video_sizes=[(2, 28, 28)])
         spans = out.video_token_spans
         self.assertEqual(len(spans), 1)
         start, end = spans[0]
@@ -80,6 +91,17 @@ class MultimodalProcessorTest(unittest.TestCase):
         self.assertEqual(seq[0], VIDEO_START)
         self.assertEqual(seq[-1], VIDEO_END)
         self.assertTrue(all(t == VIDEO_PATCH for t in seq[1:-1]))
+
+    def test_video_count_mismatch_raises(self):
+        from Tokenizer.multimodal import VIDEO_PLACEHOLDER
+
+        processor = MultimodalProcessor(build_fake_tokenizer())
+        with self.assertRaises(ValueError):
+            processor(VIDEO_PLACEHOLDER, videos=[])
+        with self.assertRaises(ValueError):
+            processor(VIDEO_PLACEHOLDER, videos=["a", "b"])
+        with self.assertRaises(ValueError):
+            processor("test", videos=["orphan"])
 
     def test_bbox_normalize_roundtrip(self):
         from Tokenizer.multimodal import decode_bbox_tokens, encode_bbox_tokens, normalize_bbox
