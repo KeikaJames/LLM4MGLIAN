@@ -24,12 +24,13 @@ CASE_SUFFIXES = [
     {
         "id": "GEN",
         "name": "genitive",
-        "surface": ["ᠤᠨ", "ᠦᠨ", "ᠶᠢᠨ", "ᠢᠨ", "ᠨᠤ", "ᠨᠦ"],
+        "surface": ["ᠤᠨ", "ᠦᠨ", "ᠶᠢᠨ", "ᠤ", "ᠦ", "ᠢᠨ", "ᠨᠤ", "ᠨᠦ"],
         "type": "case",
         "attaches_to": "noun",
         "harmony": "all_variants",
         "order": 2,
         "notes": "of",
+        "nnbsp": True,
     },
     {
         "id": "ACC",
@@ -40,16 +41,42 @@ CASE_SUFFIXES = [
         "harmony": "none",
         "order": 2,
         "notes": "direct object",
+        "nnbsp": True,
     },
     {
         "id": "DAT_LOC",
         "name": "dative-locative",
-        "surface": ["ᠳᠤ", "ᠳᠦ", "ᠲᠤ", "ᠲᠦ", "ᠳᠤᠷ", "ᠳᠦᠷ", "ᠲᠤᠷ", "ᠲᠦᠷ", "ᠠ", "ᠡ"],
+        "surface": [
+            "ᠳᠤ",
+            "ᠳᠦ",
+            "ᠲᠤ",
+            "ᠲᠦ",
+            "ᠳᠤᠷ",
+            "ᠳᠦᠷ",
+            "ᠲᠤᠷ",
+            "ᠲᠦᠷ",
+            "ᠳᠠ",
+            "ᠳᠡ",
+            "ᠠ",
+            "ᠡ",
+        ],
         "type": "case",
         "attaches_to": "noun",
         "harmony": "all_variants",
         "order": 2,
         "notes": "to/in/at",
+        "nnbsp": True,
+    },
+    {
+        "id": "LOC_ATTR",
+        "name": "locative-attributive",
+        "surface": ["ᠳᠠᠬᠢ", "ᠳᠡᠬᠢ", "ᠲᠠᠬᠢ", "ᠲᠡᠬᠢ"],
+        "type": "case",
+        "attaches_to": "noun",
+        "harmony": "all_variants",
+        "order": 2,
+        "notes": "in/at/on; historical DAQI/DEQI/TAQI/TEQI",
+        "nnbsp": True,
     },
     {
         "id": "ABL",
@@ -60,6 +87,7 @@ CASE_SUFFIXES = [
         "harmony": "all_variants",
         "order": 2,
         "notes": "from",
+        "nnbsp": True,
     },
     {
         "id": "INST",
@@ -70,6 +98,7 @@ CASE_SUFFIXES = [
         "harmony": "all_variants",
         "order": 2,
         "notes": "by/with",
+        "nnbsp": True,
     },
     {
         "id": "COM",
@@ -80,6 +109,7 @@ CASE_SUFFIXES = [
         "harmony": "all_variants",
         "order": 2,
         "notes": "with",
+        "nnbsp": True,
     },
     {
         "id": "DIR",
@@ -90,6 +120,7 @@ CASE_SUFFIXES = [
         "harmony": "all_variants",
         "order": 2,
         "notes": "towards",
+        "nnbsp": True,
     },
     {
         "id": "TERM",
@@ -100,6 +131,7 @@ CASE_SUFFIXES = [
         "harmony": "none",
         "order": 2,
         "notes": "until",
+        "nnbsp": True,
     },
 ]
 
@@ -114,6 +146,7 @@ PLURAL_SUFFIXES = [
         "harmony": "all_variants",
         "order": 1,
         "notes": "human",
+        "nnbsp": True,
     },
     {
         "id": "PL_NUGUD",
@@ -124,6 +157,7 @@ PLURAL_SUFFIXES = [
         "harmony": "all_variants",
         "order": 1,
         "notes": "general",
+        "nnbsp": True,
     },
     {
         "id": "PL_UD",
@@ -134,6 +168,7 @@ PLURAL_SUFFIXES = [
         "harmony": "all_variants",
         "order": 1,
         "notes": "general",
+        "nnbsp": True,
     },
     {
         "id": "PL_D",
@@ -144,6 +179,7 @@ PLURAL_SUFFIXES = [
         "harmony": "none",
         "order": 1,
         "notes": "short",
+        "nnbsp": True,
     },
     {
         "id": "PL_S",
@@ -154,6 +190,7 @@ PLURAL_SUFFIXES = [
         "harmony": "none",
         "order": 1,
         "notes": "short",
+        "nnbsp": True,
     },
     {
         "id": "PL_CHUD",
@@ -164,6 +201,7 @@ PLURAL_SUFFIXES = [
         "harmony": "all_variants",
         "order": 1,
         "notes": "collective",
+        "nnbsp": True,
     },
     {
         "id": "PL_DUD",
@@ -174,6 +212,7 @@ PLURAL_SUFFIXES = [
         "harmony": "all_variants",
         "order": 1,
         "notes": "collective",
+        "nnbsp": True,
     },
 ]
 
@@ -188,6 +227,7 @@ POSSESSIVE_SUFFIXES = [
         "harmony": "none",
         "order": 3,
         "notes": "my",
+        "nnbsp": True,
     },
     {
         "id": "POSS_2SG",
@@ -198,6 +238,7 @@ POSSESSIVE_SUFFIXES = [
         "harmony": "none",
         "order": 3,
         "notes": "your",
+        "nnbsp": True,
     },
     {
         "id": "POSS_3",
@@ -208,6 +249,7 @@ POSSESSIVE_SUFFIXES = [
         "harmony": "none",
         "order": 3,
         "notes": "his/her/its",
+        "nnbsp": True,
     },
     {
         "id": "POSS_1PL",
@@ -218,6 +260,7 @@ POSSESSIVE_SUFFIXES = [
         "harmony": "none",
         "order": 3,
         "notes": "our",
+        "nnbsp": True,
     },
     {
         "id": "POSS_2PL",
@@ -228,16 +271,35 @@ POSSESSIVE_SUFFIXES = [
         "harmony": "none",
         "order": 3,
         "notes": "your-plural",
+        "nnbsp": True,
     },
     {
         "id": "REFL_POSS",
         "name": "reflexive-possessive",
-        "surface": ["ᠪᠠᠨ", "ᠪᠡᠨ", "ᠢᠶᠠᠨ", "ᠢᠶᠡᠨ", "ᠶᠠᠨ", "ᠶᠡᠨ"],
+        "surface": [
+            "ᠪᠠᠨ",
+            "ᠪᠡᠨ",
+            "ᠢᠶᠠᠨ",
+            "ᠢᠶᠡᠨ",
+            "ᠶᠠᠨ",
+            "ᠶᠡᠨ",
+            "ᠶᠤᠭᠠᠨ",
+            "ᠶᠦᠭᠡᠨ",
+            "ᠳᠠᠭᠠᠨ",
+            "ᠳᠡᠭᠡᠨ",
+            "ᠲᠠᠭᠠᠨ",
+            "ᠲᠡᠭᠡᠨ",
+            "ᠠᠴᠠᠭᠠᠨ",
+            "ᠡᠴᠡᠭᠡᠨ",
+            "ᠲᠠᠢᠭᠠᠨ",
+            "ᠲᠡᠢᠭᠡᠨ",
+        ],
         "type": "possessive",
         "attaches_to": "noun",
         "harmony": "all_variants",
         "order": 3,
         "notes": "own",
+        "nnbsp": True,
     },
 ]
 
@@ -468,6 +530,7 @@ CONVERB_SUFFIXES = [
         "harmony": "all_variants",
         "order": 1,
         "notes": "and",
+        "nnbsp_surfaces": ["ᠴᠤ", "ᠴᠦ"],
     },
     {
         "id": "CVB_SIMUL_N",
@@ -744,6 +807,82 @@ DERIVATIONAL_SUFFIXES = [
 ]
 
 
+PARTICLE_SUFFIXES = [
+    {
+        "id": "Q_UU",
+        "name": "interrogative-particle",
+        "surface": ["ᠤᠤ", "ᠦᠦ"],
+        "type": "particle",
+        "attaches_to": "clause",
+        "harmony": "all_variants",
+        "order": 4,
+        "notes": "yes/no question particle",
+        "nnbsp": True,
+    },
+]
+
+
+LEGACY_MONGOL_CODE_SUFFIX_SURFACES = frozenset(
+    [
+        "ᠶᠢᠨ",
+        "ᠤᠨ",
+        "ᠦᠨ",
+        "ᠤ",
+        "ᠦ",
+        "ᠢ",
+        "ᠶᠢ",
+        "ᠳᠤ",
+        "ᠳᠦ",
+        "ᠲᠤ",
+        "ᠲᠦ",
+        "ᠳᠤᠷ",
+        "ᠳᠦᠷ",
+        "ᠲᠤᠷ",
+        "ᠲᠦᠷ",
+        "ᠳᠠᠬᠢ",
+        "ᠳᠡᠬᠢ",
+        "ᠲᠠᠬᠢ",
+        "ᠲᠡᠬᠢ",
+        "ᠠᠴᠠ",
+        "ᠡᠴᠡ",
+        "ᠪᠠᠷ",
+        "ᠪᠡᠷ",
+        "ᠢᠶᠠᠷ",
+        "ᠢᠶᠡᠷ",
+        "ᠲᠠᠢ",
+        "ᠲᠡᠢ",
+        "ᠯᠤᠭ᠎ᠠ",
+        "ᠯᠦᠭᠡ",
+        "ᠪᠠᠨ",
+        "ᠪᠡᠨ",
+        "ᠢᠶᠠᠨ",
+        "ᠢᠶᠡᠨ",
+        "ᠶᠤᠭᠠᠨ",
+        "ᠶᠦᠭᠡᠨ",
+        "ᠳᠠᠭᠠᠨ",
+        "ᠳᠡᠭᠡᠨ",
+        "ᠲᠠᠭᠠᠨ",
+        "ᠲᠡᠭᠡᠨ",
+        "ᠠᠴᠠᠭᠠᠨ",
+        "ᠡᠴᠡᠭᠡᠨ",
+        "ᠲᠠᠢᠭᠠᠨ",
+        "ᠲᠡᠢᠭᠡᠨ",
+        "ᠤᠳ",
+        "ᠦᠳ",
+        "ᠨᠤᠭᠤᠳ",
+        "ᠨᠦᠭᠦᠳ",
+        "ᠨᠠᠷ",
+        "ᠨᠡᠷ",
+        "ᠤᠤ",
+        "ᠦᠦ",
+        "ᠳᠠ",
+        "ᠳᠡ",
+        "ᠴᠤ",
+        "ᠴᠦ",
+    ]
+)
+
+
 CORE_TRADITIONAL_MONGOLIAN_SUFFIXES = (
     CASE_SUFFIXES
     + PLURAL_SUFFIXES
@@ -756,6 +895,7 @@ CORE_TRADITIONAL_MONGOLIAN_SUFFIXES = (
     + PARTICIPLE_SUFFIXES
     + NEGATION_SUFFIXES
     + DERIVATIONAL_SUFFIXES
+    + PARTICLE_SUFFIXES
 )
 
 ALL_SUFFIXES = CORE_TRADITIONAL_MONGOLIAN_SUFFIXES
@@ -781,12 +921,33 @@ def with_nnbsp(suffix):
     return NNBSP + suffix if suffix else suffix
 
 
+def allows_nnbsp(item, surface):
+    if item.get("nnbsp", False):
+        return True
+    return surface in item.get("nnbsp_surfaces", ())
+
+
 def iter_surfaces(include_nnbsp=False, include_empty=False):
     for item in ALL_SUFFIXES_BY_ORDER:
         for surface in item["surface"]:
             if not surface and not include_empty:
                 continue
-            yield item, with_nnbsp(surface) if include_nnbsp else surface
+            if include_nnbsp and allows_nnbsp(item, surface):
+                yield item, with_nnbsp(surface)
+            else:
+                yield item, surface
+
+
+def duplicate_surfaces():
+    surface_to_ids = {}
+    for item in ALL_SUFFIXES:
+        for surface in item["surface"]:
+            surface_to_ids.setdefault(surface, []).append(item["id"])
+    return {
+        surface: ids
+        for surface, ids in surface_to_ids.items()
+        if surface and len(ids) > 1
+    }
 
 
 def validate_suffix_inventory():
@@ -800,6 +961,11 @@ def validate_suffix_inventory():
             raise ValueError(f"Suffix {item['id']} has no surfaces")
         if any(not isinstance(surface, str) for surface in item["surface"]):
             raise TypeError(f"Suffix {item['id']} has a non-string surface")
+
+    surfaces = {surface for item in ALL_SUFFIXES for surface in item["surface"]}
+    missing_legacy = sorted(LEGACY_MONGOL_CODE_SUFFIX_SURFACES - surfaces)
+    if missing_legacy:
+        raise ValueError(f"Missing legacy mongol_code suffix surfaces: {missing_legacy}")
 
     return True
 
