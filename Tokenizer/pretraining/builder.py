@@ -10,6 +10,34 @@ from typing import Any
 from Tokenizer.unified.bundle import TokenizerBundle
 from Tokenizer.unified.encoded import EncodedToken
 
+IGNORE_INDEX = -100
+DEFAULT_LABEL_IGNORE_TOKENS = {
+    "<pad>",
+    "<unk>",
+    "<bos>",
+    "<img>",
+    "<image>",
+    "<image_start>",
+    "<image_patch>",
+    "<image_end>",
+    "<video>",
+    "<video_start>",
+    "<video_patch>",
+    "<video_end>",
+    "<audio>",
+    "<audio_start>",
+    "<audio_patch>",
+    "<audio_end>",
+    "<bbox>",
+    "<ocr>",
+    "<ocr_start>",
+    "<ocr_end>",
+    "<doc>",
+    "<table>",
+    "<layout>",
+    "◈",
+}
+
 
 @dataclass
 class EncodedSample:
@@ -28,6 +56,8 @@ class PretrainingDataBuilder:
         max_length: int = 4096,
         add_bos: bool = True,
         add_eos: bool = True,
+        label_ignore_id: int = IGNORE_INDEX,
+        label_ignore_tokens: set[str] | None = None,
     ):
         if max_length <= 0:
             raise ValueError("max_length must be positive")
@@ -35,6 +65,8 @@ class PretrainingDataBuilder:
         self.max_length = max_length
         self.add_bos = add_bos
         self.add_eos = add_eos
+        self.label_ignore_id = label_ignore_id
+        self.label_ignore_tokens = set(label_ignore_tokens or DEFAULT_LABEL_IGNORE_TOKENS)
 
     def encode_text(self, text: str, metadata: dict | None = None) -> EncodedSample:
         result = self.bundle.encode_with_spans(
@@ -90,7 +122,7 @@ class PretrainingDataBuilder:
         return EncodedSample(
             input_ids=list(input_ids),
             attention_mask=list(attention_mask),
-            labels=list(input_ids),
+            labels=self._build_labels(input_ids, tokens),
             token_offsets=[(token.start, token.end) for token in tokens],
             modality_spans={
                 "image_token_spans": [tuple(span) for span in modality_spans.get("image_token_spans", [])],
@@ -98,6 +130,15 @@ class PretrainingDataBuilder:
             },
             metadata=dict(metadata),
         )
+
+    def _build_labels(
+        self, input_ids: list[int], tokens: list[EncodedToken]
+    ) -> list[int]:
+        labels = list(input_ids)
+        for i, token in enumerate(tokens):
+            if token.token in self.label_ignore_tokens:
+                labels[i] = self.label_ignore_id
+        return labels
 
     def _truncate(self, sample: EncodedSample) -> EncodedSample:
         if len(sample.input_ids) <= self.max_length:

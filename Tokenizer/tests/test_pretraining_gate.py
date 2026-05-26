@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from Tokenizer.evals.pretraining_gate import run_gate
+from Tokenizer.pretraining import PretrainingDataBuilder, encoded_sample_to_dict
 from Tokenizer.tests.test_pretraining_builder import build_smoke_bundle
 
 
@@ -29,6 +30,7 @@ class PretrainingGateTest(unittest.TestCase):
         self.assertTrue(result["passed"], result["failures"])
         self.assertEqual(result["num_samples"], 1)
         self.assertIn("unk_rate", result["metrics"])
+        self.assertGreater(result["metrics"]["supervised_tokens"], 0)
 
     def test_bad_sample_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -48,6 +50,28 @@ class PretrainingGateTest(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertEqual(result["num_samples"], 0)
         self.assertTrue(any("encode failed" in item["message"] for item in result["failures"]))
+        self.assertTrue(any("no valid samples" in item["message"] for item in result["failures"]))
+
+    def test_encoded_pretraining_rows_are_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            bundle_dir = os.path.join(tmp, "bundle")
+            bundle.save_dir(bundle_dir)
+            builder = PretrainingDataBuilder(bundle, max_length=128)
+            sample = builder.encode_json_obj({
+                "type": "image_text",
+                "text": "文字 <image> test",
+                "images": ["x.jpg"],
+                "image_sizes": [[14, 14]],
+            })
+            inp = os.path.join(tmp, "encoded.jsonl")
+            with open(inp, "w", encoding="utf-8") as f:
+                f.write(json.dumps(encoded_sample_to_dict(sample), ensure_ascii=False) + "\n")
+
+            result = run_gate(bundle_dir, inp, max_length=128)
+
+        self.assertTrue(result["passed"], result["failures"])
+        self.assertEqual(result["num_samples"], 1)
 
 
 if __name__ == "__main__":

@@ -62,7 +62,47 @@ proc = MultimodalProcessor(tokenizer)
 enc = proc("describe <image>", images=[img], image_sizes=[(448, 448)])
 ```
 
-## 6. Evaluate
+## 6. Build pretraining JSONL
+
+`Tokenizer.pretraining.PretrainingDataBuilder` writes causal-LM style
+`input_ids` / `attention_mask` / `labels` rows. Labels equal input ids for
+learnable text tokens, but structural tokens are masked with `IGNORE_INDEX`
+(`-100`): `<pad>`, `<bos>`, multimodal placeholders, image/video/audio patch
+tokens, OCR/layout tags, and `<unk>`. `<eos>` remains supervised so sequence
+endings can be learned.
+
+```bash
+python -m Tokenizer.tools.build_pretraining_data \
+    --tokenizer-bundle artefacts/tokenizer_bundle \
+    --input Tokenizer/data/sample_multimodal.jsonl \
+    --output artefacts/pretrain.jsonl \
+    --max-length 2048 \
+    --pack \
+    --pack-max-length 2048 \
+    --pad-to-max-length
+```
+
+Packing only combines text-only rows. Multimodal rows stay as standalone
+samples, and truncation never leaves a partial image/video token span. If a
+span cannot fit, the whole span is removed; empty samples are skipped.
+
+## 7. Gate pretraining data
+
+Run the gate before launching a real training job. It validates ids, labels,
+offsets, multimodal span markers, loss masks inside image/video spans, unknown
+rate, and supervised-token rate.
+
+```bash
+python -m Tokenizer.evals.pretraining_gate \
+    --tokenizer-bundle artefacts/tokenizer_bundle \
+    --input artefacts/pretrain.jsonl \
+    --max-length 2048 \
+    --max-unk-rate 0.01 \
+    --min-supervised-rate 0.01 \
+    --json
+```
+
+## 8. Evaluate
 
 ```bash
 python -m Tokenizer.evals.roundtrip_check --json
@@ -75,7 +115,7 @@ python -m Tokenizer.evals.compare_baselines --json
 All evals support `--input` (jsonl or txt) and fall back to built-in
 smoke samples when no input is provided.
 
-## 7. Run the test suite
+## 9. Run the test suite
 
 ```bash
 scripts/test_all.sh
