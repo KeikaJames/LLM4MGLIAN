@@ -11,6 +11,7 @@ from Tokenizer.multimodal import (
 )
 from Tokenizer.unified.dual_tokenizer import (
     DualTrackTokenizer,
+    SEGMENT,
     SPECIAL_TOKENS,
     build_misc_tokens,
     build_unified_vocab,
@@ -91,10 +92,14 @@ class DualTokenizerTest(unittest.TestCase):
         result = tokenizer.encode_with_spans("ᠮᠣᠩᠭᠣᠯ 这 test!", add_bos=True, add_eos=True)
         self.assertEqual(result.ids[0], SPECIAL_TOKENS["<bos>"])
         self.assertEqual(result.ids[-1], SPECIAL_TOKENS["<eos>"])
-        self.assertIn(16, result.ids)
-        self.assertIn(40000, result.ids)
-        self.assertIn(55000, result.ids)
+        self.assertIn(SEGMENT["mongolian"][0], result.ids)
+        self.assertIn(SEGMENT["chinese"][0], result.ids)
+        self.assertIn(SEGMENT["english"][0], result.ids)
         self.assertIn(tokenizer.vocab["!"], result.ids)
+        self.assertEqual(result.input_ids, result.ids)
+        self.assertEqual(len(result.tokens), len(result.ids))
+        self.assertEqual(result.tokens[0].start, -1)
+        self.assertEqual(result.tokens[-1].end, -1)
 
     def test_multimodal_placeholder_and_patch_tokens_are_special(self):
         tokenizer = build_fake_tokenizer()
@@ -139,6 +144,15 @@ class DualTokenizerTest(unittest.TestCase):
         decoded = tokenizer.decode(zh_ids + en_ids)
         self.assertNotIn("\u2581", decoded)
         self.assertNotIn("\u0120", decoded)
+
+    def test_token_level_offsets_cover_tracks(self):
+        tokenizer = build_fake_tokenizer()
+        result = tokenizer.encode_with_spans("这 test 🙂")
+        by_track = [(tok.track, tok.start, tok.end) for tok in result.tokens]
+        self.assertIn(("zh", 0, 1), by_track)
+        self.assertIn(("space", 1, 2), by_track)
+        self.assertIn(("en", 2, 6), by_track)
+        self.assertTrue(any(tok.track == "misc" and tok.start == 7 for tok in result.tokens))
 
 
 if __name__ == "__main__":

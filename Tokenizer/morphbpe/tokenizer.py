@@ -1,0 +1,125 @@
+# -*- coding: utf-8 -*-
+"""Morphology-constrained BPE tokenizer for traditional Mongolian."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from Tokenizer.traditional_mongolian.stemmer import MongolStemmer
+from Tokenizer.traditional_mongolian.unicode_norm import strip_all_with_map
+
+from . import serialization
+from .offsets import MorphToken, Piece, split_on_ascii_space
+
+
+class MorphBPETokenizer:
+    def __init__(
+        self,
+        vocab: dict[str, int] | None = None,
+        merges: dict[tuple[str, str], tuple[str, int]] | None = None,
+        stemmer: MongolStemmer | None = None,
+    ):
+        self.vocab = vocab or {"<unk>": 0}
+        self.merges = merges or {}
+        self.stemmer = stemmer
+        self._id_to_token = {i: tok for tok, i in self.vocab.items()}
+
+    # ---- io ----
+
+    @classmethod
+    def from_file(cls, path: str, stemmer: MongolStemmer | None = None) -> "MorphBPETokenizer":
+        payload = serialization.load(path)
+        merges = serialization.merges_from_payload(payload)
+        return cls(
+            vocab={str(k): int(v) for k, v in payload.get("vocab", {}).items()},
+            merges=merges,
+            stemmer=stemmer,
+        )
+
+    def save(self, path: str, extra_config: dict[str, Any] | None = None) -> None:
+        serialization.dump(self, path, extra_config=extra_config)
+
+    # ---- encode ----
+
+    def encode(self, text: str) -> list[int]:
+        return [tok.id for tok in self.encode_with_offsets(text)]
+
+    def encode_with_offsets(self, text: str, base_start: int = 0) -> list[MorphToken]:
+        tokens: list[MorphToken] = []
+        for start, end in split_on_ascii_space(text):
+            for tok in self.tokenize_word(text[start:end], base_start + start):
+                tokens.append(tok)
+        return tokens
+
+    def tokenize_word(self, word: str, base_start: int = 0) -> list[MorphToken]:
+        skeleton, boundary_map = strip_all_with_map(word)
+        if not skeleton:
+            return []
+
+        analysis = self.stemmer.analyze(word) if self.stemmer else None
+        forbidden: set[int] = set()
+        if analysis is not None:
+            forbidden = set(analysis.skeleton_boundaries[1:-1])
+
+        pieces = [
+            Piece(ch, boundary_map[i], boundary_map[i + 1])
+            for i, ch in enumerate(skeleton)
+        ]
+        pieces = self._apply_merges(pieces, forbidden)
+        return [
+            MorphToken(
+                p.text,
+                self._piece_id(p.text),
+                base_start + p.start,
+                base_start + p.end,
+            )
+            for p in pieces
+        ]
+
+    def _apply_merges(self, pieces: list[Piece], forbidden: set[int]) -> list[Piece]:
+        if not self.merges:
+            return pieces
+        changed = True
+        while changed:
+            changed = False
+            best_index: int | None = None
+            best_rank: int | None = None
+            best_text = ""
+            for i in range(len(pieces) - 1):
+                if pieces[i].end in forbidden:
+                    continue
+                merge = self.merges.get((pieces[i].text, pieces[i + 1].text))
+                if merge is None:
+                    continue
+                merged, rank = merge
+                if best_rank is None or rank < best_rank:
+                    best_index = i
+                    best_rank = rank
+                    best_text = merged
+            if best_index is not None:
+                left = pieces[best_index]
+                right = pieces[best_index + 1]
+                pieces[best_index : best_index + 2] = [
+                    Piece(best_text, left.start, right.end)
+                ]
+                changed = True
+        return pieces
+
+    def _piece_id(self, piece: str) -> int:
+        if piece in self.vocab:
+            return self.vocab[piece]
+        return self.vocab.get("<unk>", 0)
+
+    # ---- decode ----
+
+    def decode(self, ids: list[int]) -> str:
+        if not self._id_to_token:
+            self._id_to_token = {i: tok for tok, i in self.vocab.items()}
+        out: list[str] = []
+        for i in ids:
+            tok = self._id_to_token.get(i, "")
+            if tok == "<unk>":
+                out.append("\ufffd")
+                continue
+            out.append(tok)
+        return "".join(out)
