@@ -73,6 +73,60 @@ class PretrainingGateTest(unittest.TestCase):
         self.assertTrue(result["passed"], result["failures"])
         self.assertEqual(result["num_samples"], 1)
 
+    def test_malformed_encoded_row_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            bundle_dir = os.path.join(tmp, "bundle")
+            bundle.save_dir(bundle_dir)
+            inp = os.path.join(tmp, "malformed.jsonl")
+            with open(inp, "w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "input_ids": ["not", "an", "int"],
+                    "attention_mask": [1, 1, 1],
+                    "labels": [0, 0, 0],
+                    "token_offsets": [[0, 1], [1, 2], [2, 3]],
+                    "modality_spans": {"image_token_spans": [], "video_token_spans": []},
+                }, ensure_ascii=False) + "\n")
+
+            result = run_gate(bundle_dir, inp, max_length=128)
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["num_samples"], 0)
+        self.assertTrue(
+            any("encoded row parse failed" in item["message"] for item in result["failures"]),
+            result["failures"],
+        )
+
+    def test_short_labels_with_modality_span_does_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            bundle_dir = os.path.join(tmp, "bundle")
+            bundle.save_dir(bundle_dir)
+            builder = PretrainingDataBuilder(bundle, max_length=128)
+            sample = builder.encode_json_obj({
+                "type": "image_text",
+                "text": "文字 <image> test",
+                "images": ["x.jpg"],
+                "image_sizes": [[14, 14]],
+            })
+            row = encoded_sample_to_dict(sample)
+            # Truncate labels so they are shorter than input_ids while keeping
+            # a modality span that extends past the labels length. The gate
+            # should report structured failures (length mismatch) without
+            # raising an IndexError from _validate_spans.
+            row["labels"] = row["labels"][: max(1, len(row["labels"]) // 2)]
+            inp = os.path.join(tmp, "short_labels.jsonl")
+            with open(inp, "w", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+            result = run_gate(bundle_dir, inp, max_length=128)
+
+        self.assertFalse(result["passed"])
+        self.assertTrue(
+            any("length mismatch" in item["message"] for item in result["failures"]),
+            result["failures"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

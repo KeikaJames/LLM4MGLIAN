@@ -31,8 +31,14 @@ def run_gate(
     supervised_tokens = 0
     for idx, obj in enumerate(_iter_input(input_path)):
         if _is_encoded_row(obj):
-            sample = _sample_from_encoded_row(obj)
-            text = _source_text_from_encoded_row(obj)
+            try:
+                sample = _sample_from_encoded_row(obj)
+                text = _source_text_from_encoded_row(obj)
+            except Exception as exc:
+                failures.append(
+                    {"sample": idx, "message": f"encoded row parse failed: {exc}"}
+                )
+                continue
         else:
             text = str(obj.get("text", ""))
             try:
@@ -192,7 +198,8 @@ def _validate_spans(
             continue
         if sample.input_ids[start] != start_id or sample.input_ids[end - 1] != end_id:
             failures.append({"sample": sample_idx, "span": span_idx, "message": f"{key} markers mismatch"})
-        for token_pos in range(start, end):
+        label_end = min(end, len(sample.labels))
+        for token_pos in range(start, label_end):
             if sample.labels[token_pos] != IGNORE_INDEX:
                 failures.append(
                     {

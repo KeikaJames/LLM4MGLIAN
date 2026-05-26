@@ -66,7 +66,10 @@ class PretrainingDataBuilder:
         self.add_bos = add_bos
         self.add_eos = add_eos
         self.label_ignore_id = label_ignore_id
-        self.label_ignore_tokens = set(label_ignore_tokens or DEFAULT_LABEL_IGNORE_TOKENS)
+        if label_ignore_tokens is None:
+            self.label_ignore_tokens = set(DEFAULT_LABEL_IGNORE_TOKENS)
+        else:
+            self.label_ignore_tokens = set(label_ignore_tokens)
 
     def encode_text(self, text: str, metadata: dict | None = None) -> EncodedSample:
         result = self.bundle.encode_with_spans(
