@@ -5,3 +5,6 @@ homepage: https://github.com/suragch/mongol_code
 
 environment:
   sdk: '>=3.8.0 <4.0.0'
+
+dev_dependencies:
+  test: ^1.25.15
