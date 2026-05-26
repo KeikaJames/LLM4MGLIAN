@@ -21,6 +21,47 @@ pub fn is_letter(codepoint: u32) -> bool {
     (0xE264..=MENKSOFT_END).contains(&codepoint)
 }
 
+pub fn is_consonant(codepoint: u32) -> bool {
+    (0xE2B1..=0xE34F).contains(&codepoint)
+}
+
+pub fn is_vowel(codepoint: u32) -> bool {
+    (0xE264..0xE2B1).contains(&codepoint)
+}
+
+pub fn is_masculine_vowel(codepoint: u32) -> bool {
+    (0xE264..0xE270).contains(&codepoint) || (0xE283..0xE293).contains(&codepoint)
+}
+
+pub fn is_feminine_vowel(codepoint: u32) -> bool {
+    (0xE270..0xE279).contains(&codepoint) || (0xE293..0xE2B1).contains(&codepoint)
+}
+
+pub fn is_feminine_vowel_or_i(codepoint: u32) -> bool {
+    is_feminine_vowel(codepoint) || is_i(codepoint)
+}
+
+pub fn is_a(codepoint: u32) -> bool {
+    (0xE264..=0xE26F).contains(&codepoint)
+}
+
+pub fn is_i(codepoint: u32) -> bool {
+    (0xE279..0xE283).contains(&codepoint)
+}
+
+pub fn is_m(codepoint: u32) -> bool {
+    (0xE2F1..=0xE2F6).contains(&codepoint)
+}
+
+pub fn is_long_tooth_i(codepoint: u32) -> bool {
+    matches!(codepoint, 0xE27E | 0xE27F | 0xE280 | 0xE321)
+}
+
+pub fn word_contains_masculine_vowel(word: &[u32]) -> bool {
+    word.iter().copied().any(is_masculine_vowel)
+}
+
+#[allow(dead_code)]
 pub fn is_initial_isolate_glyph(codepoint: u32) -> bool {
     matches!(
         codepoint,
