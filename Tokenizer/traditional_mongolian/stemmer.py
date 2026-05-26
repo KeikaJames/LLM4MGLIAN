@@ -62,6 +62,25 @@ class StemResult:
     confidence: float = 0.0
 
 
+INFLECTIONAL_SUFFIX_TYPES = {
+    "case",
+    "possessive",
+    "plural",
+    "participle",
+    "converb",
+    "particle",
+    "tense",
+    "mood",
+    "negation",
+}
+
+INNER_FORMATION_TYPES = {
+    "derivational",
+    "voice",
+    "aspect",
+}
+
+
 def build_suffix_lookup(suffix_list: Iterable[dict[str, Any]]) -> list[SuffixItem]:
     lookup: list[SuffixItem] = []
     seen: set[tuple[str, str]] = set()
@@ -105,9 +124,15 @@ def build_suffix_lookup(suffix_list: Iterable[dict[str, Any]]) -> list[SuffixIte
 
 
 class MongolStemmer:
-    def __init__(self, min_root_len: int = 2, max_depth: int = 6):
+    def __init__(
+        self,
+        min_root_len: int = 2,
+        max_depth: int = 6,
+        min_suffix_confidence: float = 0.60,
+    ):
         self.min_root_len = min_root_len
         self.max_depth = max_depth
+        self.min_suffix_confidence = min_suffix_confidence
         self.lookup = build_suffix_lookup(ALL_SUFFIXES_BY_ORDER)
 
     def analyze(self, word: str) -> StemResult:
@@ -143,6 +168,31 @@ class MongolStemmer:
             )
 
         root_end, suffix_spans, suffix_ids, suffix_types = best
+        confidence = self._confidence(
+            root_len=root_end,
+            word_len=len(skeleton),
+            suffix_count=len(suffix_spans),
+            suffix_types=suffix_types,
+            separator_hits=sum(
+                1 for start, _end in suffix_spans if start in separator_boundaries
+            ),
+            suffix_lengths=[end - start for start, end in suffix_spans],
+        )
+
+        if suffix_spans and confidence < self.min_suffix_confidence:
+            return StemResult(
+                word=word,
+                root=word,
+                boundaries=[0, len(word)],
+                skeleton_boundaries=[0, len(skeleton)],
+                confidence=self._confidence(
+                    root_len=len(skeleton),
+                    word_len=len(skeleton),
+                    suffix_count=0,
+                    suffix_types=[],
+                ),
+            )
+
         root = slice_original(word, 0, root_end, boundary_map)
         suffixes = [
             slice_original(word, start, end, boundary_map)
@@ -151,12 +201,6 @@ class MongolStemmer:
 
         skeleton_boundaries = [0, root_end] + [end for _, end in suffix_spans]
         boundaries = [boundary_map[i] for i in skeleton_boundaries]
-        confidence = self._confidence(
-            root_len=root_end,
-            word_len=len(skeleton),
-            suffix_count=len(suffixes),
-            suffix_types=suffix_types,
-        )
 
         return StemResult(
             word=word,
@@ -235,16 +279,19 @@ class MongolStemmer:
 
         def score(
             item: tuple[int, list[tuple[int, int]], list[str], list[str]],
-        ) -> tuple[float, int, int]:
+        ) -> tuple[float, int, int, int, int]:
             root_end, spans, _ids, types = item
+            separator_hits = sum(1 for start, _end in spans if start in separator_boundaries)
             conf = self._confidence(
                 root_len=root_end,
                 word_len=len(skeleton),
                 suffix_count=len(spans),
                 suffix_types=types,
+                separator_hits=separator_hits,
+                suffix_lengths=[end - start for start, end in spans],
             )
-            separator_hits = sum(1 for start, _end in spans if start in separator_boundaries)
-            return conf, separator_hits, len(spans), -root_end
+            inner_count = sum(1 for suffix_type in types if suffix_type in INNER_FORMATION_TYPES)
+            return conf, separator_hits, root_end, -inner_count, -len(spans)
 
         candidates.sort(key=score, reverse=True)
         return candidates[0]
@@ -255,30 +302,59 @@ class MongolStemmer:
         word_len: int,
         suffix_count: int,
         suffix_types: list[str],
+        separator_hits: int = 0,
+        suffix_lengths: list[int] | None = None,
     ) -> float:
         if suffix_count == 0:
-            return 0.50
+            return 0.52
 
-        score = 0.58
-        score += min(0.24, 0.08 * suffix_count)
-        score += min(0.08, 0.02 * len(set(suffix_types)))
+        score = 0.56
+        if suffix_count == 1:
+            score += 0.05
+        else:
+            score += min(0.10, 0.04 * suffix_count)
+
+        score += min(0.12, 0.08 * separator_hits)
 
         stripped_ratio = (word_len - root_len) / max(word_len, 1)
-        if stripped_ratio > 0.65:
-            score -= 0.12
-        if root_len <= self.min_root_len and suffix_count:
-            score -= 0.09
-        if root_len <= 2 and suffix_count >= 2:
-            score -= 0.08
-        if suffix_types and suffix_types[-1] in {
-            "case",
-            "possessive",
-            "participle",
-            "converb",
-            "mood",
-            "particle",
-        }:
+        root_ratio = root_len / max(word_len, 1)
+        inner_count = sum(1 for suffix_type in suffix_types if suffix_type in INNER_FORMATION_TYPES)
+        inflection_count = sum(
+            1 for suffix_type in suffix_types if suffix_type in INFLECTIONAL_SUFFIX_TYPES
+        )
+        suffix_lengths = suffix_lengths or []
+
+        if suffix_types and suffix_types[-1] in INFLECTIONAL_SUFFIX_TYPES:
+            score += 0.04
+        if inflection_count == suffix_count and suffix_count <= 2:
             score += 0.03
+
+        if separator_hits == 0:
+            if suffix_count >= 2:
+                score -= min(0.18, 0.12 + 0.03 * (suffix_count - 2))
+            if inner_count:
+                score -= min(0.16, 0.07 * inner_count)
+            if root_ratio < 0.45:
+                score -= 0.10
+            if (
+                suffix_lengths
+                and suffix_lengths[-1] <= 1
+                and suffix_types[-1] in {"case", "plural", "possessive"}
+            ):
+                score -= 0.10
+        elif inner_count and separator_hits < suffix_count:
+            score -= min(0.06, 0.03 * inner_count)
+
+        if stripped_ratio > 0.65:
+            score -= 0.18
+        elif stripped_ratio > 0.50:
+            score -= 0.08
+        if root_len <= self.min_root_len and suffix_count:
+            score -= 0.12
+        if root_len <= 2 and suffix_count >= 2:
+            score -= 0.12
+        if separator_hits == 0 and root_ratio >= 0.55:
+            score += 0.02
 
         return round(max(0.0, min(0.95, score)), 3)
 

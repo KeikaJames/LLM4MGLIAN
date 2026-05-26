@@ -9,11 +9,15 @@ import sys
 
 from Tokenizer.morphbpe import MorphBPETokenizer
 from Tokenizer.morphbpe.offsets import MorphToken
-from Tokenizer.traditional_mongolian.unicode_norm import strip_all_with_map
+from Tokenizer.traditional_mongolian.unicode_norm import MVS, NNBSP, strip_all_with_map
 from Tokenizer.traditional_mongolian.stemmer import MongolStemmer
 
 
-SMOKE_WORDS = ["ᠮᠣᠩᠭᠣᠯ", "ᠪᠢᠴᠢᠭ", "ᠨᠣᠮ"]
+SMOKE_WORDS = [
+    "ᠮᠣᠩᠭᠣᠯ",
+    "ᠪᠢᠴᠢᠭ" + MVS + "ᠦᠨ",
+    "ᠨᠡᠷ" + NNBSP + "ᠦᠦ",
+]
 
 
 def _iter_words(path: str | None):
