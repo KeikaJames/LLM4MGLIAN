@@ -2,7 +2,7 @@
 
 import unittest
 
-from .core_traditional_mongolian_suffixes import (
+from .suffixes import (
     ALL_SUFFIXES,
     LEGACY_MONGOL_CODE_SUFFIX_SURFACES,
     allows_nnbsp,

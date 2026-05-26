@@ -1,23 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Core traditional Mongolian suffix inventory for tokenizer experiments."""
+"""Traditional Mongolian suffix inventory for tokenizer experiments."""
 
-NNBSP = "\u202F"
-NIRUGU = "\u180A"
-FVS1 = "\u180B"
-FVS2 = "\u180C"
-FVS3 = "\u180D"
-MVS = "\u180E"
-FVS4 = "\u180F"
-
-CONTROL_CHARS = {
-    "NNBSP": NNBSP,
-    "NIRUGU": NIRUGU,
-    "FVS1": FVS1,
-    "FVS2": FVS2,
-    "FVS3": FVS3,
-    "MVS": MVS,
-    "FVS4": FVS4,
-}
+try:
+    from .unicode_norm import CONTROL_CHARS, NNBSP
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from unicode_norm import CONTROL_CHARS, NNBSP  # type: ignore[no-redef]
 
 
 CASE_SUFFIXES = [
@@ -908,13 +895,6 @@ ALL_SUFFIXES_BY_ORDER = sorted(
         item.get("id", ""),
     ),
 )
-
-
-def strip_controls(text):
-    """Remove suffix-control characters for loose surface matching."""
-    for ch in (FVS1, FVS2, FVS3, FVS4, MVS):
-        text = text.replace(ch, "")
-    return text.replace(NNBSP, "").replace(NIRUGU, "")
 
 
 def with_nnbsp(suffix):

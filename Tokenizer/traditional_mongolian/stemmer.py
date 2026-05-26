@@ -14,152 +14,23 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 try:
-    from .core_traditional_mongolian_suffixes import (
-        ALL_SUFFIXES_BY_ORDER,
-        FVS1,
-        FVS2,
-        FVS3,
-        FVS4,
-        MVS,
-        NIRUGU,
-        NNBSP,
-    )
+    from .morph_rules import get_harmony, harmony_ok, stacking_ok
+    from .suffixes import ALL_SUFFIXES_BY_ORDER
+    from .unicode_norm import control_boundaries, strip_all, strip_all_with_map
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from core_traditional_mongolian_suffixes import (  # type: ignore[no-redef]
-        ALL_SUFFIXES_BY_ORDER,
-        FVS1,
-        FVS2,
-        FVS3,
-        FVS4,
-        MVS,
-        NIRUGU,
-        NNBSP,
+    from morph_rules import get_harmony, harmony_ok, stacking_ok  # type: ignore[no-redef]
+    from suffixes import ALL_SUFFIXES_BY_ORDER  # type: ignore[no-redef]
+    from unicode_norm import (  # type: ignore[no-redef]
+        control_boundaries,
+        strip_all,
+        strip_all_with_map,
     )
-
-
-CTRL_NO_NNBSP = {FVS1, FVS2, FVS3, FVS4, MVS, NIRUGU}
-CTRL_ALL = {FVS1, FVS2, FVS3, FVS4, MVS, NIRUGU, NNBSP}
-
-
-def strip_controls(text: str) -> str:
-    """Strip glyph controls while preserving NNBSP word-internal spacing."""
-    return "".join(ch for ch in text if ch not in CTRL_NO_NNBSP)
-
-
-def strip_all(text: str) -> str:
-    """Strip every control ignored by suffix matching."""
-    return "".join(ch for ch in text if ch not in CTRL_ALL)
-
-
-def skeleton_with_map(text: str) -> tuple[str, list[int]]:
-    chars: list[str] = []
-    boundary_map: list[int] = [0]
-
-    for i, ch in enumerate(text):
-        if ch in CTRL_ALL:
-            continue
-        chars.append(ch)
-        boundary_map.append(i + 1)
-
-    return "".join(chars), boundary_map
-
-
-def control_boundaries(text: str) -> set[int]:
-    """Return skeleton offsets preceded by ignored controls in the source."""
-    boundaries: set[int] = set()
-    skeleton_pos = 0
-    pending_control = False
-
-    for ch in text:
-        if ch in CTRL_ALL:
-            if skeleton_pos > 0:
-                pending_control = True
-            continue
-
-        if pending_control:
-            boundaries.add(skeleton_pos)
-            pending_control = False
-        skeleton_pos += 1
-
-    return boundaries
 
 
 def slice_original(text: str, start: int, end: int, boundary_map: list[int]) -> str:
     if start >= end:
         return ""
     return text[boundary_map[start] : boundary_map[end]]
-
-
-MASCULINE_VOWELS = {"ᠠ", "ᠣ", "ᠤ"}
-FEMININE_VOWELS = {"ᠡ", "ᠥ", "ᠦ"}
-NEUTRAL_VOWELS = {"ᠢ"}
-
-
-def get_harmony(text: str) -> str:
-    s = strip_all(text)
-    has_m = any(ch in MASCULINE_VOWELS for ch in s)
-    has_f = any(ch in FEMININE_VOWELS for ch in s)
-
-    if has_m and not has_f:
-        return "masculine"
-    if has_f and not has_m:
-        return "feminine"
-    if not has_m and not has_f:
-        return "neutral"
-    return "mixed"
-
-
-def harmony_ok(stem_harmony: str, suffix_harmony: str, declared_harmony: str) -> bool:
-    if declared_harmony in {"none", "neutral"}:
-        return True
-    if stem_harmony in {"neutral", "mixed"}:
-        return True
-    if suffix_harmony in {"neutral", "mixed"}:
-        return True
-    if declared_harmony == "all_variants":
-        return stem_harmony == suffix_harmony
-    return stem_harmony == declared_harmony
-
-
-LEGAL_OUTER = {
-    "voice": {
-        "voice",
-        "tense",
-        "mood",
-        "aspect",
-        "converb",
-        "participle",
-        "negation",
-        "derivational",
-    },
-    "tense": {"negation", "possessive", "case"},
-    "mood": {"negation", "possessive"},
-    "aspect": {"tense", "mood", "converb", "participle", "negation"},
-    "converb": {"possessive", "negation", "case"},
-    "participle": {"case", "plural", "possessive", "negation", "derivational"},
-    "plural": {"case", "possessive"},
-    "case": {"possessive"},
-    "possessive": {"case"},
-    "negation": {"case", "possessive", "tense"},
-    "particle": set(),
-    "derivational": {
-        "voice",
-        "tense",
-        "mood",
-        "aspect",
-        "converb",
-        "participle",
-        "plural",
-        "case",
-        "possessive",
-        "negation",
-        "derivational",
-    },
-}
-
-
-def stacking_ok(inner_type: str, outer_type: str) -> bool:
-    return outer_type in LEGAL_OUTER.get(inner_type, set())
 
 
 @dataclass(frozen=True)
@@ -235,7 +106,7 @@ class MongolStemmer:
         self.lookup = build_suffix_lookup(ALL_SUFFIXES_BY_ORDER)
 
     def analyze(self, word: str) -> StemResult:
-        skeleton, boundary_map = skeleton_with_map(word)
+        skeleton, boundary_map = strip_all_with_map(word)
         separator_boundaries = control_boundaries(word)
 
         if len(skeleton) < self.min_root_len:
