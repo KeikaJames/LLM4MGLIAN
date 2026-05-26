@@ -2,8 +2,8 @@
 
 import unittest
 
-from .core_traditional_mongolian_suffixes import MVS, NNBSP
-from .stemmer import MongolStemmer, control_boundaries, skeleton_with_map, strip_all
+from .stemmer import MongolStemmer
+from .unicode_norm import MVS, NNBSP, control_boundaries, strip_all, strip_all_with_map
 
 
 class TraditionalMongolianStemmerTest(unittest.TestCase):
@@ -46,7 +46,7 @@ class TraditionalMongolianStemmerTest(unittest.TestCase):
 
     def test_skeleton_map_ignores_controls(self):
         word = "ᠨᠡᠷ" + NNBSP + "ᠦᠦ"
-        skeleton, boundary_map = skeleton_with_map(word)
+        skeleton, boundary_map = strip_all_with_map(word)
         self.assertEqual(skeleton, strip_all(word))
         self.assertEqual(skeleton, "ᠨᠡᠷᠦᠦ")
         self.assertEqual(boundary_map, [0, 1, 2, 3, 5, 6])
