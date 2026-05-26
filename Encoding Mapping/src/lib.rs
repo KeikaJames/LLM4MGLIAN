@@ -9,6 +9,7 @@
 mod fixed;
 mod menksoft;
 mod mongol;
+mod unicode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -57,6 +58,15 @@ pub fn normalize_unicode(input: &str) -> String {
         .collect()
 }
 
+/// Normalize text to nominal Mongolian Unicode for tokenizer ingestion.
+///
+/// This collapses Menksoft PUA and MW/Unicode presentation variants into the
+/// same base-letter stream by removing FVS controls after conversion. MVS is
+/// preserved because it is a suffix separator, not a glyph-only selector.
+pub fn normalize_to_nominal_unicode(input: &str) -> String {
+    unicode::to_nominal_unicode(&normalize_to_unicode(input))
+}
+
 /// Convert legacy Menksoft PUA glyph codes to Unicode.
 pub fn convert_menksoft_to_unicode(input: &str) -> String {
     if input.is_empty() {
@@ -91,9 +101,9 @@ pub fn convert_menksoft_to_unicode(input: &str) -> String {
     from_codepoints(&output)
 }
 
-/// Unicode -> Menksoft is not needed for tokenizer normalization yet.
-pub fn convert_unicode_to_menksoft(_input: &str) -> String {
-    unimplemented!("Unicode to Menksoft is not part of the tokenizer normalizer yet")
+/// Convert standard Mongolian Unicode to legacy Menksoft PUA glyph codes.
+pub fn convert_unicode_to_menksoft(input: &str) -> String {
+    unicode::to_menksoft(input)
 }
 
 fn append_menksoft_word(output: &mut Vec<u32>, word: &[u32]) {
@@ -259,6 +269,30 @@ mod tests {
         assert_eq!(
             normalize_to_unicode("\u{182A}\u{202F}\u{1822}"),
             "\u{182A}\u{180E}\u{1822}"
+        );
+    }
+
+    #[test]
+    fn normalizes_mw_variants_to_nominal_unicode() {
+        assert_eq!(
+            normalize_to_nominal_unicode("\u{182A}\u{1820}\u{182D}\u{180D}\u{1830}\u{1822}"),
+            "\u{182A}\u{1820}\u{182D}\u{1830}\u{1822}"
+        );
+    }
+
+    #[test]
+    fn converts_unicode_word_to_menksoft() {
+        assert_eq!(
+            convert_unicode_to_menksoft("\u{182A}\u{1822}\u{1834}\u{1822}\u{182D}"),
+            "\u{E2C1}\u{E27F}\u{E317}\u{E27E}\u{E2E8}"
+        );
+    }
+
+    #[test]
+    fn converts_mw_variant_word_to_menksoft() {
+        assert_eq!(
+            convert_unicode_to_menksoft("\u{182A}\u{1820}\u{182D}\u{180D}\u{1830}\u{1822}"),
+            "\u{E2C1}\u{E26D}\u{E2EE}\u{E301}\u{E27B}"
         );
     }
 }
