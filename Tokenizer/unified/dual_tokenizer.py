@@ -10,39 +10,31 @@ Tracks:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 try:
-    from ..multimodal.tokens import MULTIMODAL_SPECIAL_TOKENS
+    from ..generic_bpe import HFTrackTokenizer, encode_byte_fallback, is_byte_token
     from ..traditional_mongolian.stemmer import MongolStemmer
+    from .encoded import DualTrackResult, EncodedToken
+    from .vocab import (
+        SEGMENT,
+        SPECIAL_TOKENS,
+        build_misc_tokens,
+        build_unified_vocab,
+        make_byte_tokens,
+    )
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from Tokenizer.multimodal.tokens import MULTIMODAL_SPECIAL_TOKENS
+    from Tokenizer.generic_bpe import HFTrackTokenizer, encode_byte_fallback, is_byte_token
     from Tokenizer.traditional_mongolian.stemmer import MongolStemmer
-
-
-BASE_SPECIAL_TOKENS = {
-    "<pad>": 0,
-    "<unk>": 1,
-    "<bos>": 2,
-    "<eos>": 3,
-    "<img>": 4,
-    "▁": 5,
-    "◈": 6,
-}
-
-SPECIAL_TOKENS = {
-    **BASE_SPECIAL_TOKENS,
-    **MULTIMODAL_SPECIAL_TOKENS,
-}
-
-SEGMENT = {
-    "special": (0, 16),
-    "mongolian": (16, 40000),
-    "chinese": (40000, 55000),
-    "english": (55000, 63000),
-    "misc": (63000, 64000),
-}
+    from Tokenizer.unified.encoded import DualTrackResult, EncodedToken
+    from Tokenizer.unified.vocab import (
+        SEGMENT,
+        SPECIAL_TOKENS,
+        build_misc_tokens,
+        build_unified_vocab,
+        make_byte_tokens,
+    )
 
 SPECIAL_TOKEN_TEXTS = tuple(sorted(SPECIAL_TOKENS, key=len, reverse=True))
 
@@ -99,12 +91,6 @@ class Span:
     text: str
     start: int
     end: int
-
-
-@dataclass
-class DualTrackResult:
-    ids: list[int]
-    spans: list[Span] = field(default_factory=list)
 
 
 def in_ranges(cp: int, ranges: list[tuple[int, int]]) -> bool:
@@ -174,39 +160,12 @@ def segment_by_language(text: str) -> list[Span]:
     return spans
 
 
-class HFTrackTokenizer:
-    def __init__(
-        self,
-        hf_tokenizer: Any,
-        prefix: str,
-        local_to_global: dict[int, int],
-        unk_id: int,
-    ):
-        self.hf_tokenizer = hf_tokenizer
-        self.prefix = prefix
-        self.local_to_global = local_to_global
-        self.unk_id = unk_id
-
-    def encode(self, text: str) -> list[int]:
-        local_ids = self.hf_tokenizer.encode(text, add_special_tokens=False)
-        return [self.local_to_global.get(i, self.unk_id) for i in local_ids]
-
-
 def _strip_hf_boundary_markers(text: str) -> str:
     # HuggingFace tokenizers keep word-boundary markers in their raw token
     # strings (SentencePiece "▁" / GPT-2 "Ġ"). Mirror HF's
     # convert_tokens_to_string behavior so decode() yields natural text
     # instead of artifacts like "▁hello" / "Ġhello".
     return text.replace("\u2581", " ").replace("\u0120", " ")
-
-
-def make_byte_tokens() -> list[str]:
-    return [f"<0x{i:02X}>" for i in range(256)]
-
-
-def build_misc_tokens() -> list[str]:
-    punct = list("0123456789.,!?;:()[]{}\"'-—…。，！？；：（）《》“”‘’、·")
-    return list(dict.fromkeys(punct + make_byte_tokens()))
 
 
 def extract_hf_vocab_tokens(
@@ -244,53 +203,6 @@ def extract_hf_vocab_tokens(
     return selected, vocab
 
 
-def build_unified_vocab(
-    morphbpe_vocab: dict[str, int],
-    chinese_tokens: list[str],
-    english_tokens: list[str],
-    misc_tokens: list[str] | None = None,
-) -> dict[str, int]:
-    unified: dict[str, int] = dict(SPECIAL_TOKENS)
-
-    mn_lo, mn_hi = SEGMENT["mongolian"]
-    next_id = mn_lo
-    for token, _local_id in sorted(morphbpe_vocab.items(), key=lambda x: x[1]):
-        if token in SPECIAL_TOKENS:
-            continue
-        if next_id >= mn_hi:
-            break
-        unified[token] = next_id
-        next_id += 1
-
-    zh_lo, zh_hi = SEGMENT["chinese"]
-    next_id = zh_lo
-    for token in chinese_tokens:
-        if next_id >= zh_hi:
-            break
-        unified[f"zh▁{token}"] = next_id
-        next_id += 1
-
-    en_lo, en_hi = SEGMENT["english"]
-    next_id = en_lo
-    for token in english_tokens:
-        if next_id >= en_hi:
-            break
-        unified[f"en▁{token}"] = next_id
-        next_id += 1
-
-    mi_lo, mi_hi = SEGMENT["misc"]
-    next_id = mi_lo
-    for token in misc_tokens or []:
-        if next_id >= mi_hi:
-            break
-        if token in unified:
-            continue
-        unified[token] = next_id
-        next_id += 1
-
-    return unified
-
-
 class DualTrackTokenizer:
     def __init__(
         self,
@@ -318,12 +230,14 @@ class DualTrackTokenizer:
             prefix="zh▁",
             local_to_global=self.zh_local_to_global,
             unk_id=self.unk_id,
+            track="zh",
         )
         self.en = HFTrackTokenizer(
             en_hf_tokenizer,
             prefix="en▁",
             local_to_global=self.en_local_to_global,
             unk_id=self.unk_id,
+            track="en",
         )
 
     def _build_hf_map(self, hf_tokenizer: Any, lang: str) -> dict[int, int]:
@@ -341,59 +255,87 @@ class DualTrackTokenizer:
     def encode(
         self, text: str, add_bos: bool = False, add_eos: bool = False
     ) -> list[int]:
-        return self.encode_with_spans(text, add_bos=add_bos, add_eos=add_eos).ids
+        return self.encode_with_spans(text, add_bos=add_bos, add_eos=add_eos).input_ids
 
     def encode_with_spans(
         self, text: str, add_bos: bool = False, add_eos: bool = False
     ) -> DualTrackResult:
         spans = segment_by_language(text)
-        ids: list[int] = []
+        tokens: list[EncodedToken] = []
 
         if add_bos:
-            ids.append(self.vocab["<bos>"])
+            tokens.append(EncodedToken(self.vocab["<bos>"], "<bos>", "special", -1, -1))
 
         for span in spans:
             if span.lang == "special":
-                ids.extend(self._encode_special(span.text))
+                tokens.extend(self._encode_special(span))
             elif span.lang == "mn":
-                ids.extend(self._encode_mongolian(span.text))
+                tokens.extend(self._encode_mongolian(span))
             elif span.lang == "zh":
-                ids.extend(self.zh.encode(span.text))
+                tokens.extend(self.zh.encode_with_offsets(span.text, span.start))
             elif span.lang == "en":
-                ids.extend(self.en.encode(span.text))
+                tokens.extend(self.en.encode_with_offsets(span.text, span.start))
             elif span.lang == "space":
-                ids.extend(self._encode_space(span.text))
+                tokens.extend(self._encode_space(span))
             else:
-                ids.extend(self._encode_misc(span.text))
+                tokens.extend(self._encode_misc(span))
 
         if add_eos:
-            ids.append(self.vocab["<eos>"])
+            tokens.append(EncodedToken(self.vocab["<eos>"], "<eos>", "special", -1, -1))
 
-        return DualTrackResult(ids=ids, spans=spans)
+        return DualTrackResult(input_ids=[token.id for token in tokens], tokens=tokens, spans=spans)
 
-    def _encode_special(self, text: str) -> list[int]:
-        token_id = self.vocab.get(text)
-        return [token_id if token_id is not None else self.unk_id]
+    def _encode_special(self, span: Span) -> list[EncodedToken]:
+        token_id = self.vocab.get(span.text, self.unk_id)
+        return [EncodedToken(token_id, span.text, "special", span.start, span.end)]
 
-    def _encode_mongolian(self, text: str) -> list[int]:
-        local_ids = self.morphbpe.encode(text)
-        return [self.mn_local_to_global.get(i, self.unk_id) for i in local_ids]
+    def _encode_mongolian(self, span: Span) -> list[EncodedToken]:
+        if hasattr(self.morphbpe, "encode_with_offsets"):
+            local_tokens = self.morphbpe.encode_with_offsets(span.text)
+            tokens: list[EncodedToken] = []
+            for item in local_tokens:
+                if isinstance(item, dict):
+                    local_id = item["id"]
+                    text = item["token"]
+                    start = item["start"]
+                    end = item["end"]
+                else:
+                    local_id = item.id
+                    text = item.token
+                    start = item.start
+                    end = item.end
+                tokens.append(
+                    EncodedToken(
+                        self.mn_local_to_global.get(local_id, self.unk_id),
+                        text,
+                        "mn",
+                        span.start + start,
+                        span.start + end,
+                    )
+                )
+            return tokens
 
-    def _encode_space(self, text: str) -> list[int]:
+        local_ids = self.morphbpe.encode(span.text)
+        return [
+            EncodedToken(
+                self.mn_local_to_global.get(i, self.unk_id),
+                span.text,
+                "mn",
+                span.start,
+                span.end,
+            )
+            for i in local_ids
+        ]
+
+    def _encode_space(self, span: Span) -> list[EncodedToken]:
         space_id = self.vocab.get("▁", self.unk_id)
-        return [space_id for _ in text]
+        return [
+            EncodedToken(space_id, "▁", "space", pos, pos + 1)
+            for pos in range(span.start, span.end)
+        ]
 
-    def _encode_misc(self, text: str) -> list[int]:
-        ids: list[int] = []
-        for ch in text:
-            direct = self.vocab.get(ch)
-            if direct is not None:
-                ids.append(direct)
-                continue
-
-            for byte in ch.encode("utf-8"):
-                ids.append(self.vocab.get(f"<0x{byte:02X}>", self.unk_id))
-        return ids
+    def _encode_misc(self, span: Span) -> list[EncodedToken]:
+        return encode_byte_fallback(span.text, self.vocab, self.unk_id, span.start, "misc")
 
     def decode(self, ids: list[int]) -> str:
         parts: list[str] = []
@@ -411,7 +353,7 @@ class DualTrackTokenizer:
                 flush_bytes()
                 continue
 
-            if token.startswith("<0x") and token.endswith(">") and len(token) == 6:
+            if is_byte_token(token):
                 try:
                     byte_buf.append(int(token[3:5], 16))
                     continue

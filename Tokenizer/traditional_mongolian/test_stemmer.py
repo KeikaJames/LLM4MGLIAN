@@ -3,7 +3,7 @@
 import unittest
 
 from .stemmer import MongolStemmer
-from .unicode_norm import MVS, NNBSP, control_boundaries, strip_all, strip_all_with_map
+from .unicode_norm import FVS1, MVS, NNBSP, control_boundaries, strip_all, strip_all_with_map
 
 
 class TraditionalMongolianStemmerTest(unittest.TestCase):
@@ -51,6 +51,21 @@ class TraditionalMongolianStemmerTest(unittest.TestCase):
         self.assertEqual(skeleton, "ᠨᠡᠷᠦᠦ")
         self.assertEqual(boundary_map, [0, 1, 2, 3, 5, 6])
         self.assertEqual(control_boundaries(word), {3})
+
+    def test_trailing_controls_are_covered_by_offset_map(self):
+        word = "ᠨᠡᠷ" + FVS1 + MVS
+        skeleton, boundary_map = strip_all_with_map(word)
+        self.assertEqual(skeleton, "ᠨᠡᠷ")
+        self.assertEqual(boundary_map[-1], len(word))
+
+    def test_duplicate_surface_disambiguation_does_not_crash(self):
+        result = self.stemmer.analyze("ᠪᠠᠷᠢ" + MVS + "ᠳᠠ")
+        self.assertIsInstance(result.suffix_ids, list)
+
+    def test_short_word_over_stemming_prevention(self):
+        result = self.stemmer.analyze("ᠨᠡᠷ")
+        self.assertEqual(result.root, "ᠨᠡᠷ")
+        self.assertEqual(result.suffixes, [])
 
 
 if __name__ == "__main__":

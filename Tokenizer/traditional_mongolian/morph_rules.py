@@ -77,3 +77,16 @@ LEGAL_OUTER = {
 
 def stacking_ok(inner_type: str, outer_type: str) -> bool:
     return outer_type in LEGAL_OUTER.get(inner_type, set())
+
+
+def sequence_sane(types: list[str]) -> bool:
+    """Reject obviously runaway suffix stacks while keeping duplicate surfaces legal."""
+    limits = {
+        "plural": 1,
+        "case": 2,
+        "possessive": 2,
+    }
+    for suffix_type, limit in limits.items():
+        if types.count(suffix_type) > limit:
+            return False
+    return True

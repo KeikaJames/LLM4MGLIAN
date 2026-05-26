@@ -14,11 +14,16 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 try:
-    from .morph_rules import get_harmony, harmony_ok, stacking_ok
+    from .morph_rules import get_harmony, harmony_ok, sequence_sane, stacking_ok
     from .suffixes import ALL_SUFFIXES_BY_ORDER
     from .unicode_norm import control_boundaries, strip_all, strip_all_with_map
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from morph_rules import get_harmony, harmony_ok, stacking_ok  # type: ignore[no-redef]
+    from morph_rules import (  # type: ignore[no-redef]
+        get_harmony,
+        harmony_ok,
+        sequence_sane,
+        stacking_ok,
+    )
     from suffixes import ALL_SUFFIXES_BY_ORDER  # type: ignore[no-redef]
     from unicode_norm import (  # type: ignore[no-redef]
         control_boundaries,
@@ -202,6 +207,8 @@ class MongolStemmer:
                 continue
             if suffix_types and not stacking_ok(item.suffix_type, suffix_types[0]):
                 continue
+            if not sequence_sane([item.suffix_type] + suffix_types):
+                continue
 
             result = self._strip(
                 skeleton=skeleton,
@@ -259,6 +266,8 @@ class MongolStemmer:
         stripped_ratio = (word_len - root_len) / max(word_len, 1)
         if stripped_ratio > 0.65:
             score -= 0.12
+        if root_len <= self.min_root_len and suffix_count:
+            score -= 0.09
         if root_len <= 2 and suffix_count >= 2:
             score -= 0.08
         if suffix_types and suffix_types[-1] in {

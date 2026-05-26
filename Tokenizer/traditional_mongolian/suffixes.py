@@ -2,9 +2,9 @@
 """Traditional Mongolian suffix inventory for tokenizer experiments."""
 
 try:
-    from .unicode_norm import CONTROL_CHARS, NNBSP
+    from .unicode_norm import CONTROL_CHARS, NNBSP, strip_all
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from unicode_norm import CONTROL_CHARS, NNBSP  # type: ignore[no-redef]
+    from unicode_norm import CONTROL_CHARS, NNBSP, strip_all  # type: ignore[no-redef]
 
 
 CASE_SUFFIXES = [
@@ -403,7 +403,7 @@ MOOD_SUFFIXES = [
     {
         "id": "IMP_2",
         "name": "imperative-2",
-        "surface": ["ᠠ", "ᠡ", ""],
+        "surface": ["ᠠ", "ᠡ"],
         "type": "mood",
         "attaches_to": "verb",
         "harmony": "all_variants",
@@ -891,7 +891,7 @@ ALL_SUFFIXES_BY_ORDER = sorted(
     ALL_SUFFIXES,
     key=lambda item: (
         -item.get("order", 0),
-        -max(len(surface) for surface in item.get("surface", [""])),
+        -max(len(strip_all(surface)) for surface in item.get("surface", [""])),
         item.get("id", ""),
     ),
 )
@@ -941,6 +941,8 @@ def validate_suffix_inventory():
             raise ValueError(f"Suffix {item['id']} has no surfaces")
         if any(not isinstance(surface, str) for surface in item["surface"]):
             raise TypeError(f"Suffix {item['id']} has a non-string surface")
+        if any(surface == "" for surface in item["surface"]):
+            raise ValueError(f"Suffix {item['id']} has an empty surface")
 
     surfaces = {surface for item in ALL_SUFFIXES for surface in item["surface"]}
     missing_legacy = sorted(LEGACY_MONGOL_CODE_SUFFIX_SURFACES - surfaces)
