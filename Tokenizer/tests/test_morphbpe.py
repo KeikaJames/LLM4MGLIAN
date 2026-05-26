@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from Tokenizer.morphbpe import MorphBPETokenizer
+from Tokenizer.morphbpe.trainer import MorphBPETrainer
 from Tokenizer.traditional_mongolian import MVS
 from Tokenizer.traditional_mongolian.stemmer import MongolStemmer
 
@@ -90,6 +91,27 @@ class MorphBPETest(unittest.TestCase):
         # <unk> renders as replacement char, never crashes
         self.assertEqual(tokenizer.decode([0]), "\ufffd")
 
+    def test_low_confidence_stemmer_boundary_does_not_block_lexical_merge(self):
+        word = "ᠮᠣᠩᠭᠣᠯ"
+        tokenizer = MorphBPETokenizer(
+            vocab={
+                "<unk>": 0,
+                "ᠮᠣ": 1,
+                "ᠩᠭᠣ": 2,
+                "ᠯ": 3,
+                "ᠮᠣᠩᠭᠣᠯ": 4,
+            },
+            merges={
+                ("ᠮ", "ᠣ"): ("ᠮᠣ", 0),
+                ("ᠩ", "ᠭ"): ("ᠩᠭ", 1),
+                ("ᠩᠭ", "ᠣ"): ("ᠩᠭᠣ", 2),
+                ("ᠮᠣ", "ᠩᠭᠣ"): ("ᠮᠣᠩᠭᠣ", 3),
+                ("ᠮᠣᠩᠭᠣ", "ᠯ"): ("ᠮᠣᠩᠭᠣᠯ", 4),
+            },
+            stemmer=self.stemmer,
+        )
+        self.assertEqual([token.token for token in tokenizer.tokenize_word(word)], [word])
+
     def test_control_chars_do_not_crash(self):
         from Tokenizer.traditional_mongolian import FVS1, NNBSP
 
@@ -116,6 +138,13 @@ class MorphBPETest(unittest.TestCase):
             loaded = MorphBPETokenizer.from_file(path, self.stemmer)
         text = "ᠪᠢ"
         self.assertEqual(tokenizer.encode(text), loaded.encode(text))
+
+    def test_trainer_ignores_non_mongolian_words_in_mixed_corpus(self):
+        trainer = MorphBPETrainer(stemmer=self.stemmer, vocab_size=64, min_pair_freq=1)
+        tokenizer = trainer.train(["ᠮᠣᠩᠭᠣᠯ text 中文 123"])
+        self.assertNotIn("t", tokenizer.vocab)
+        self.assertNotIn("文", tokenizer.vocab)
+        self.assertIn("ᠮ", tokenizer.vocab)
 
 
 if __name__ == "__main__":

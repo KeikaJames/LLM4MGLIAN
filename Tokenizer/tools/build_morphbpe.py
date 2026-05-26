@@ -39,12 +39,14 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="output .json model file")
     parser.add_argument("--vocab-size", type=int, default=4096)
     parser.add_argument("--min-pair-freq", type=int, default=2)
+    parser.add_argument("--min-boundary-confidence", type=float, default=0.60)
     args = parser.parse_args()
 
     trainer = MorphBPETrainer(
         stemmer=MongolStemmer(),
         vocab_size=args.vocab_size,
         min_pair_freq=args.min_pair_freq,
+        min_boundary_confidence=args.min_boundary_confidence,
     )
     tokenizer = trainer.train(_iter_texts(args.input))
     tokenizer.save(args.output, extra_config={"source": args.input})

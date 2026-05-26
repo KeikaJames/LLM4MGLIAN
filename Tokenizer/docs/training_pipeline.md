@@ -25,12 +25,17 @@ python -m Tokenizer.tools.build_morphbpe \
     --input Tokenizer/data/sample_text.jsonl \
     --output artefacts/morphbpe.json \
     --vocab-size 4096 \
-    --min-pair-freq 2
+    --min-pair-freq 2 \
+    --min-boundary-confidence 0.60
 ```
 
 `MorphBPETrainer` uses `MongolStemmer.analyze(word).skeleton_boundaries`
-as forbidden merge boundaries, so no learnt merge crosses a morpheme.
-The JSON output follows `serialization.SCHEMA_VERSION == 1`.
+as forbidden merge boundaries only when the stemmer confidence meets the
+configured threshold. Low-confidence analyses are treated as lexical words,
+which prevents false roots like splitting `ᠮᠣᠩᠭᠣᠯ` at final `ᠯ`.
+The trainer also ignores non-Mongolian whitespace-delimited words in mixed
+corpora; Chinese, English, punctuation, and byte fallback tracks are trained
+outside MorphBPE. The JSON output follows `serialization.SCHEMA_VERSION == 1`.
 
 ## 3. Build the unified tokenizer
 
