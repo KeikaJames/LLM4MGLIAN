@@ -7,6 +7,8 @@ __all__ = [
     "SEGMENT",
     "SPECIAL_TOKENS",
     "Span",
+    "TokenizerBundle",
+    "TokenizerBundleConfig",
     "build_dual_tokenizer",
     "build_misc_tokens",
     "build_unified_vocab",
@@ -24,6 +26,10 @@ def __getattr__(name):
         from . import vocab
 
         return getattr(vocab, name)
+    if name in {"TokenizerBundle", "TokenizerBundleConfig"}:
+        from . import bundle
+
+        return getattr(bundle, name)
     if name in __all__:
         from . import dual_tokenizer
 
