@@ -100,6 +100,32 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertLessEqual(len(packed[0].input_ids), 64)
         self.assertEqual(len(packed[0].labels), len(packed[0].attention_mask))
 
+    def test_pack_samples_trims_modality_spans_to_sequence_length(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            builder = PretrainingDataBuilder(bundle, max_length=128, add_bos=False, add_eos=False)
+            image_sample = builder.encode_json_obj(
+                {
+                    "type": "image_text",
+                    "text": "<image> test",
+                    "images": ["x.jpg"],
+                    "image_sizes": [[29, 29]],
+                }
+            )
+            packed = pack_samples(
+                [image_sample],
+                max_length=3,
+                pad_id=bundle.tokenizer.vocab["<pad>"],
+                eos_id=bundle.tokenizer.vocab["<eos>"],
+            )
+
+        self.assertEqual(len(packed), 1)
+        self.assertEqual(len(packed[0].input_ids), 3)
+        self.assertEqual(packed[0].modality_spans["image_token_spans"], [])
+        for spans in packed[0].modality_spans.values():
+            for start, end in spans:
+                self.assertLessEqual(end, len(packed[0].input_ids))
+
     def test_build_pretraining_data_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)
