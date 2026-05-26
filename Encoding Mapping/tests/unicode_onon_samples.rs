@@ -1,5 +1,6 @@
 use encoding_mapping::{
-    convert_menksoft_to_unicode, convert_unicode_to_menksoft, normalize_to_nominal_unicode,
+    convert_menksoft_to_unicode, convert_mw_to_unicode, convert_unicode_to_menksoft,
+    normalize_to_nominal_unicode,
 };
 
 #[test]
@@ -40,4 +41,18 @@ fn mw_and_menksoft_collapse_to_same_nominal_unicode() {
 
     assert_eq!(normalize_to_nominal_unicode(mw), nominal);
     assert_eq!(normalize_to_nominal_unicode(menksoft), nominal);
+}
+
+#[test]
+fn mw_pipeline_unifies_nnbs_and_removes_zero_width_noise() {
+    let noisy_mw = "\u{FEFF}\u{1828}\u{1821}\u{1837}\u{202F}\u{200D}\u{1821}\u{200B}";
+
+    assert_eq!(
+        convert_mw_to_unicode(noisy_mw),
+        "\u{1828}\u{1821}\u{1837}\u{180E}\u{1821}"
+    );
+    assert_eq!(
+        normalize_to_nominal_unicode(noisy_mw),
+        "\u{1828}\u{1821}\u{1837}\u{180E}\u{1821}"
+    );
 }

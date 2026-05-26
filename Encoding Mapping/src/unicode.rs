@@ -37,7 +37,22 @@ pub fn to_nominal_unicode(input: &str) -> String {
             let cp = c as u32;
             match cp {
                 mongol::NNBS => char::from_u32(mongol::MVS),
-                mongol::FVS1..=mongol::FVS4 => None,
+                cp if mongol::is_fvs(cp) => None,
+                cp if mongol::is_zero_width_noise(cp) => None,
+                _ => Some(c),
+            }
+        })
+        .collect()
+}
+
+pub fn clean_mw_unicode(input: &str) -> String {
+    input
+        .chars()
+        .filter_map(|c| {
+            let cp = c as u32;
+            match cp {
+                mongol::NNBS => char::from_u32(mongol::MVS),
+                cp if mongol::is_zero_width_noise(cp) => None,
                 _ => Some(c),
             }
         })
@@ -54,8 +69,10 @@ fn process_segment(segment: &[u32]) -> Vec<u32> {
         .map(|&cp| match cp {
             mongol::NNBS => mongol::MVS,
             mongol::ZWJ => mongol::NIRUGU,
+            cp if mongol::is_zero_width_noise(cp) => 0,
             _ => cp,
         })
+        .filter(|&cp| cp != 0)
         .collect();
 
     split_by_mvs_words(&normalized)

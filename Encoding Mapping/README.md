@@ -10,8 +10,8 @@ Current status:
 
 - Rust exposes `normalize_to_unicode`, `detect_encoding`, and
   `normalize_to_nominal_unicode` for tokenizer input, plus
-  `convert_menksoft_to_unicode` and `convert_unicode_to_menksoft` for parity
-  checks.
+  `convert_menksoft_to_unicode`, `convert_mw_to_unicode`, and
+  `convert_unicode_to_menksoft` for parity checks.
 - Menksoft PUA text and Unicode/MW-style text are normalized with native Rust
   code; there is no Dart subprocess bridge.
 - GB/T 25914-2023 fixed sequences and contextual Menksoft presentation variants
@@ -42,3 +42,6 @@ Important encoding boundary:
   should therefore call `normalize_to_nominal_unicode` so MW presentation
   selectors and Menksoft presentation glyphs collapse onto the same nominal
   Unicode letters.
+- `convert_mw_to_unicode` cleans MW/Unicode transport noise by removing
+  zero-width noise (`ZWJ`, `ZWNJ`, `ZWSP`, word joiner, BOM) and converting
+  historical `NNBS` suffix spacing to `MVS`.
