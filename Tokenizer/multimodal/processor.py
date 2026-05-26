@@ -64,6 +64,16 @@ class MultimodalProcessor:
         n_img_holes = text.count(IMAGE_PLACEHOLDER)
         n_vid_holes = text.count(VIDEO_PLACEHOLDER)
 
+        if len(image_list) != n_img_holes:
+            raise ValueError(
+                f"<image> placeholder count ({n_img_holes}) does not match "
+                f"images length ({len(image_list)})"
+            )
+        if len(video_list) != n_vid_holes:
+            raise ValueError(
+                f"<video> placeholder count ({n_vid_holes}) does not match "
+                f"videos length ({len(video_list)})"
+            )
         if sizes and len(sizes) != n_img_holes:
             raise ValueError(
                 f"<image> placeholder count ({n_img_holes}) does not match "
