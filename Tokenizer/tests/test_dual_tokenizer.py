@@ -117,6 +117,29 @@ class DualTokenizerTest(unittest.TestCase):
         self.assertGreater(len(ids), 1)
         self.assertEqual(tokenizer.decode(ids), "🙂")
 
+    def test_decode_strips_hf_boundary_markers(self):
+        # Simulate HF vocabs that keep SentencePiece "▁" and GPT-2 "Ġ"
+        # word-boundary markers in their raw token strings (e.g. Llama/Qwen).
+        zh = FakeHFTokenizer({"\u2581这": 0, "张图": 1})
+        en = FakeHFTokenizer({"\u0120hello": 0, "world": 1})
+        vocab = build_unified_vocab(
+            morphbpe_vocab=FakeMorphBPE.vocab,
+            chinese_tokens=["\u2581这", "张图"],
+            english_tokens=["\u0120hello", "world"],
+            misc_tokens=build_misc_tokens(),
+        )
+        tokenizer = DualTrackTokenizer(vocab, FakeMorphBPE(), zh, en)
+
+        zh_ids = [vocab["zh▁\u2581这"], vocab["zh▁张图"]]
+        en_ids = [vocab["en▁\u0120hello"], vocab["en▁world"]]
+
+        self.assertEqual(tokenizer.decode(zh_ids), " 这张图")
+        self.assertEqual(tokenizer.decode(en_ids), " helloworld")
+        # No raw boundary glyphs should leak through.
+        decoded = tokenizer.decode(zh_ids + en_ids)
+        self.assertNotIn("\u2581", decoded)
+        self.assertNotIn("\u0120", decoded)
+
 
 if __name__ == "__main__":
     unittest.main()
