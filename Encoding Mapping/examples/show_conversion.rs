@@ -1,5 +1,6 @@
 use encoding_mapping::{
-    convert_menksoft_to_unicode, convert_unicode_to_menksoft, normalize_to_nominal_unicode,
+    convert_menksoft_to_unicode, convert_mw_to_unicode, convert_unicode_to_menksoft,
+    normalize_to_nominal_unicode,
 };
 
 fn main() {
@@ -18,6 +19,13 @@ fn main() {
             "MW/Unicode variant -> nominal Unicode",
             "\u{182A}\u{1820}\u{182D}\u{180D}\u{1830}\u{1822}",
             normalize_to_nominal_unicode("\u{182A}\u{1820}\u{182D}\u{180D}\u{1830}\u{1822}"),
+        ),
+        (
+            "Noisy MW -> Unicode",
+            "\u{FEFF}\u{1828}\u{1821}\u{1837}\u{202F}\u{200D}\u{1821}\u{200B}",
+            convert_mw_to_unicode(
+                "\u{FEFF}\u{1828}\u{1821}\u{1837}\u{202F}\u{200D}\u{1821}\u{200B}",
+            ),
         ),
         (
             "Menksoft variant -> nominal Unicode",

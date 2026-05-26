@@ -5,7 +5,11 @@ pub const REFERENCE_MARK: u32 = 0x203B;
 pub const QUESTION_EXCLAMATION: u32 = 0x2048;
 pub const EXCLAMATION_QUESTION: u32 = 0x2049;
 pub const NNBS: u32 = 0x202F;
+pub const ZERO_WIDTH_SPACE: u32 = 0x200B;
+pub const ZERO_WIDTH_NON_JOINER: u32 = 0x200C;
 pub const ZWJ: u32 = 0x200D;
+pub const WORD_JOINER: u32 = 0x2060;
+pub const BYTE_ORDER_MARK: u32 = 0xFEFF;
 
 pub const LEFT_DOUBLE_ANGLE_BRACKET: u32 = 0x300A;
 pub const RIGHT_DOUBLE_ANGLE_BRACKET: u32 = 0x300B;
@@ -99,6 +103,13 @@ pub fn is_control(codepoint: u32) -> bool {
 
 pub fn is_fvs(codepoint: u32) -> bool {
     matches!(codepoint, FVS1 | FVS2 | FVS3 | FVS4)
+}
+
+pub fn is_zero_width_noise(codepoint: u32) -> bool {
+    matches!(
+        codepoint,
+        ZERO_WIDTH_SPACE | ZERO_WIDTH_NON_JOINER | ZWJ | WORD_JOINER | BYTE_ORDER_MARK
+    )
 }
 
 pub fn is_letter(codepoint: u32) -> bool {

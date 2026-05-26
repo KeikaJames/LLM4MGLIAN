@@ -48,14 +48,18 @@ pub fn normalize_to_unicode(input: &str) -> String {
 
 /// Normalize already-Unicode text for tokenizer ingestion.
 pub fn normalize_unicode(input: &str) -> String {
-    input
-        .chars()
-        .map(|c| match c as u32 {
-            // Historical NNBSP usage in this codebase means suffix separator.
-            mongol::NNBS => char::from_u32(mongol::MVS).unwrap(),
-            cp => char::from_u32(cp).unwrap(),
-        })
-        .collect()
+    unicode::clean_mw_unicode(input)
+}
+
+/// Convert MW/民委共享工程-style Unicode text into the crate's standard Unicode.
+///
+/// Onon's current MW output uses Mongolian Unicode plus standard variation
+/// selectors rather than Menksoft PUA. This step cleans transport/control
+/// noise and unifies historical NNBS suffix spacing to MVS while preserving
+/// FVS. Use `normalize_to_nominal_unicode` when tokenizer input must collapse
+/// presentation variants to one base-letter stream.
+pub fn convert_mw_to_unicode(input: &str) -> String {
+    unicode::clean_mw_unicode(input)
 }
 
 /// Normalize text to nominal Mongolian Unicode for tokenizer ingestion.
@@ -269,6 +273,16 @@ mod tests {
         assert_eq!(
             normalize_to_unicode("\u{182A}\u{202F}\u{1822}"),
             "\u{182A}\u{180E}\u{1822}"
+        );
+    }
+
+    #[test]
+    fn cleans_zero_width_noise_in_unicode_pipeline() {
+        assert_eq!(
+            convert_mw_to_unicode(
+                "\u{FEFF}\u{182A}\u{200B}\u{1820}\u{200C}\u{182D}\u{200D}\u{1830}\u{2060}\u{1822}"
+            ),
+            "\u{182A}\u{1820}\u{182D}\u{1830}\u{1822}"
         );
     }
 
