@@ -2,22 +2,22 @@
 
 Rust port work for `mongol_code`.
 
-`mongol_code` converts between standard Mongolian Unicode text and legacy
-Menksoft Private Use Area glyph codes. This is not a simple one-to-one mapping:
-the conversion depends on word position, FVS/MVS control characters, vowel
-gender, fixed sequences from the GB/T 25914-2023 rules, and neighboring glyph
-shape.
+The tokenizer-facing goal is normalization: collapse legacy Mongolian encodings
+into one standard Unicode stream before segmentation, tokenization, and vector
+training.
 
 Current status:
 
-- Rust exposes the same two public conversion functions:
-  - `convert_unicode_to_menksoft`
-  - `convert_menksoft_to_unicode`
-- The Rust crate currently delegates to the restored Dart implementation as a
-  parity bridge.
-- The bridge is intentional scaffolding for the native Rust port: it gives the
-  Rust API and tests a stable oracle while each contextual rule module is moved
-  from Dart to Rust.
+- Rust exposes `normalize_to_unicode`, `detect_encoding`, and
+  `convert_menksoft_to_unicode`.
+- Menksoft PUA text is normalized with native Rust code; there is no Dart
+  subprocess bridge.
+- GB/T 25914-2023 fixed sequences from the original implementation are included
+  as Rust lookup data.
+- Non-fixed Menksoft presentation glyphs are collapsed to their Unicode nominal
+  characters for ML normalization.
 
-The Dart test suite is restored in `mongol_code-master/test` and should stay as
-the compatibility baseline during the port.
+Menksoft glyphs encode presentation forms, so full reversible rendering parity
+still needs the contextual rule port. For tokenizer input, this crate should
+prefer canonical Unicode normalization over preserving every presentation
+variant.
