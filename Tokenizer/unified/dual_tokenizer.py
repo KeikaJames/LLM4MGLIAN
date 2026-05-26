@@ -59,8 +59,6 @@ CJK_RANGES = [
     (0x2A700, 0x2B73F),
     (0x2B740, 0x2B81F),
     (0x2B820, 0x2CEAF),
-    (0x3000, 0x303F),
-    (0xFF00, 0xFFEF),
 ]
 
 LATIN_RANGES = [
@@ -70,9 +68,19 @@ LATIN_RANGES = [
     (0x1E00, 0x1EFF),
 ]
 
+FULLWIDTH_LATIN_RANGES = [
+    (0xFF21, 0xFF3A),
+    (0xFF41, 0xFF5A),
+]
+
 DIGIT_RANGES = [
     (0x0030, 0x0039),
     (0xFF10, 0xFF19),
+]
+
+CJK_SYMBOL_RANGES = [
+    (0x3000, 0x303F),
+    (0xFF00, 0xFFEF),
 ]
 
 SPACE_CHARS = {
@@ -110,12 +118,14 @@ def char_lang(ch: str) -> str:
         return "space"
     if in_ranges(cp, MONGOLIAN_RANGES):
         return "mn"
-    if in_ranges(cp, CJK_RANGES):
-        return "zh"
-    if in_ranges(cp, LATIN_RANGES):
-        return "en"
     if in_ranges(cp, DIGIT_RANGES):
         return "misc"
+    if in_ranges(cp, LATIN_RANGES) or in_ranges(cp, FULLWIDTH_LATIN_RANGES):
+        return "en"
+    if in_ranges(cp, CJK_SYMBOL_RANGES):
+        return "misc"
+    if in_ranges(cp, CJK_RANGES):
+        return "zh"
 
     return "misc"
 
