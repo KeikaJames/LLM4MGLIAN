@@ -9,13 +9,18 @@ training.
 Current status:
 
 - Rust exposes `normalize_to_unicode`, `detect_encoding`, and
-  `convert_menksoft_to_unicode`.
-- Menksoft PUA text is normalized with native Rust code; there is no Dart
-  subprocess bridge.
+  `normalize_to_nominal_unicode` for tokenizer input, plus
+  `convert_menksoft_to_unicode` and `convert_unicode_to_menksoft` for parity
+  checks.
+- Menksoft PUA text and Unicode/MW-style text are normalized with native Rust
+  code; there is no Dart subprocess bridge.
 - GB/T 25914-2023 fixed sequences and contextual Menksoft presentation variants
   covered by the historical word tests are included as Rust lookup/rule data.
 - `standards/README.md` records the official standards-system reference.
-- 140 Menksoft -> Unicode historical parity samples run as Rust tests.
+- 210 Menksoft -> Unicode fixed sequences and 210 Unicode -> Menksoft fixed
+  sequences are compiled into Rust lookup tables.
+- 140 Menksoft -> Unicode historical parity samples and Onon-derived
+  Unicode/MW/Menksoft samples run as Rust tests.
 
 Standards reference:
 
@@ -29,8 +34,11 @@ Standards reference:
 
 Important encoding boundary:
 
-- Unicode/GB/T 25914-2023 is the canonical tokenizer representation.
+- Nominal Unicode is the canonical tokenizer representation.
 - Menksoft is a legacy PUA presentation-glyph encoding and maps into Unicode.
-- 民委/共享工程编码 is a separate legacy source. It needs its own table or
-  verified samples before it can be mapped safely; this crate must not pretend
-  it is the same as Menksoft.
+- Onon documents three relevant code modes: GB2010 (`MN`), Menksoft/Menk Code
+  (`MK`/`MKL`), and 民委共享工程 (`MW`). The current Onon converter labels MW as
+  a Unicode 2022-style standard stream rather than Menksoft PUA. The tokenizer
+  should therefore call `normalize_to_nominal_unicode` so MW presentation
+  selectors and Menksoft presentation glyphs collapse onto the same nominal
+  Unicode letters.

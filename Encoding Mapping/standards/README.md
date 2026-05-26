@@ -17,3 +17,20 @@ The public standards system exposes online preview and download actions for this
 standard, but the download flow requires CAPTCHA verification. Large standards
 PDFs are intentionally ignored by git; use the official page as the source of
 record.
+
+## Onon Encoding References
+
+- Onon input-method help documents three modes: national standard code (`MN`),
+  Menksoft code (`MK`), and 民族事务委员会共享工程标准编码 (`MW`):
+  `https://ime.onon.cn/help-index.html`
+- Onon Windows changelog records MW support and interconversion with standard
+  2010 and Menksoft codes:
+  `https://ime.onon.cn/zh-CN/changelog/win`
+- Onon web converter exposes GB2010, MW, MKL, and DLH modes:
+  `https://mt.onon.cn/codeconvert`
+
+Implementation note: Onon's current MW conversion output is Unicode codepoints
+with required variation selectors for the newer standard form, not Menksoft
+PUA. For tokenizer training we normalize it with
+`normalize_to_nominal_unicode`, which removes glyph-only FVS selectors after
+conversion while preserving MVS suffix separators.
