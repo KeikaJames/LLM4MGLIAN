@@ -1119,10 +1119,13 @@ fn is_mongolian_segment_character(codepoint: u32) -> bool {
     is_mongolian_word_character(codepoint)
         || is_todo_sibe_manchu(codepoint)
         || codepoint == mongol::NNBS
+        || codepoint == mongol::ZWJ
 }
 
 fn is_mongolian_word_character(codepoint: u32) -> bool {
-    mongol::is_control(codepoint) || mongol::is_letter(codepoint) || codepoint == mongol::BIRGA
+    mongol::is_control(codepoint)
+        || mongol::is_letter(codepoint)
+        || matches!(codepoint, mongol::BIRGA | mongol::NIRUGU)
 }
 
 fn is_todo_sibe_manchu(codepoint: u32) -> bool {

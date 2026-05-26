@@ -309,4 +309,13 @@ mod tests {
             "\u{E2C1}\u{E26D}\u{E2EE}\u{E301}\u{E27B}"
         );
     }
+
+    #[test]
+    fn converts_nirugu_to_menksoft() {
+        assert_eq!(convert_unicode_to_menksoft("\u{180A}"), "\u{E23E}");
+        assert_eq!(
+            convert_unicode_to_menksoft("\u{1820}\u{180A}\u{1820}"),
+            "\u{E266}\u{E23E}\u{E268}"
+        );
+    }
 }
