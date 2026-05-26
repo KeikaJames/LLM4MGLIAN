@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from Tokenizer.morphbpe import MorphBPETrainer
-from Tokenizer.pretraining import PretrainingDataBuilder, pack_samples
+from Tokenizer.pretraining import IGNORE_INDEX, PretrainingDataBuilder, pack_samples
 from Tokenizer.unified.bundle import TokenizerBundle
 
 
@@ -34,7 +34,8 @@ class PretrainingBuilderTest(unittest.TestCase):
             builder = PretrainingDataBuilder(build_smoke_bundle(tmp), max_length=128)
             sample = builder.encode_text("ᠮᠣᠩᠭᠣᠯ 文字 test")
         self.assertEqual(len(sample.input_ids), len(sample.attention_mask))
-        self.assertEqual(sample.labels, sample.input_ids)
+        self.assertEqual(sample.labels[0], IGNORE_INDEX)
+        self.assertEqual(sample.labels[1:], sample.input_ids[1:])
         self.assertEqual(len(sample.token_offsets), len(sample.input_ids))
         self.assertEqual(sample.modality_spans["image_token_spans"], [])
 
@@ -51,7 +52,13 @@ class PretrainingBuilderTest(unittest.TestCase):
             )
         self.assertEqual(len(sample.modality_spans["image_token_spans"]), 1)
         self.assertEqual(sample.metadata["images"], ["x.jpg"])
-        self.assertEqual(sample.labels, sample.input_ids)
+        start, end = sample.modality_spans["image_token_spans"][0]
+        self.assertTrue(all(label == IGNORE_INDEX for label in sample.labels[start:end]))
+        self.assertEqual(sample.labels[0], IGNORE_INDEX)
+        self.assertGreater(
+            sum(1 for label in sample.labels if label != IGNORE_INDEX),
+            0,
+        )
 
     def test_ocr_metadata_is_retained(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -67,6 +74,12 @@ class PretrainingBuilderTest(unittest.TestCase):
             )
         self.assertEqual(sample.metadata["type"], "ocr")
         self.assertEqual(sample.metadata["ocr"][0]["text"], "hello")
+
+    def test_structural_special_labels_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            builder = PretrainingDataBuilder(build_smoke_bundle(tmp), max_length=128)
+            sample = builder.encode_text("<ocr> hello")
+        self.assertEqual(sample.labels[0], IGNORE_INDEX)
 
     def test_truncation_does_not_cut_image_span(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,6 +113,23 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertLessEqual(len(packed[0].input_ids), 64)
         self.assertEqual(len(packed[0].labels), len(packed[0].attention_mask))
 
+    def test_pack_samples_can_pad_to_max_length(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            builder = PretrainingDataBuilder(bundle, max_length=64, add_bos=False, add_eos=False)
+            sample = builder.encode_text("hello")
+            packed = pack_samples(
+                [sample],
+                max_length=8,
+                pad_id=bundle.tokenizer.vocab["<pad>"],
+                eos_id=bundle.tokenizer.vocab["<eos>"],
+                pad_to_max_length=True,
+            )
+        self.assertEqual(len(packed), 1)
+        self.assertEqual(len(packed[0].input_ids), 8)
+        self.assertEqual(packed[0].attention_mask[-1], 0)
+        self.assertEqual(packed[0].labels[-1], IGNORE_INDEX)
+
     def test_pack_samples_trims_modality_spans_to_sequence_length(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)
@@ -119,12 +149,34 @@ class PretrainingBuilderTest(unittest.TestCase):
                 eos_id=bundle.tokenizer.vocab["<eos>"],
             )
 
+        self.assertEqual(packed, [])
+
+    def test_pack_trim_does_not_leave_partial_image_tokens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            builder = PretrainingDataBuilder(bundle, max_length=128, add_bos=False, add_eos=False)
+            image_sample = builder.encode_json_obj(
+                {
+                    "type": "image_text",
+                    "text": "a <image> b",
+                    "images": ["x.jpg"],
+                    "image_sizes": [[29, 29]],
+                }
+            )
+            packed = pack_samples(
+                [image_sample],
+                max_length=3,
+                pad_id=bundle.tokenizer.vocab["<pad>"],
+                eos_id=bundle.tokenizer.vocab["<eos>"],
+            )
+        forbidden = {
+            bundle.tokenizer.vocab["<image_start>"],
+            bundle.tokenizer.vocab["<image_patch>"],
+            bundle.tokenizer.vocab["<image_end>"],
+        }
         self.assertEqual(len(packed), 1)
-        self.assertEqual(len(packed[0].input_ids), 3)
+        self.assertTrue(forbidden.isdisjoint(packed[0].input_ids))
         self.assertEqual(packed[0].modality_spans["image_token_spans"], [])
-        for spans in packed[0].modality_spans.values():
-            for start, end in spans:
-                self.assertLessEqual(end, len(packed[0].input_ids))
 
     def test_build_pretraining_data_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,6 +205,10 @@ class PretrainingBuilderTest(unittest.TestCase):
                     out,
                     "--max-length",
                     "128",
+                    "--pack",
+                    "--pack-max-length",
+                    "16",
+                    "--pad-to-max-length",
                 ],
                 check=True,
                 capture_output=True,
@@ -162,8 +218,11 @@ class PretrainingBuilderTest(unittest.TestCase):
             with open(out, "r", encoding="utf-8") as f:
                 row = json.loads(f.readline())
         self.assertEqual(summary["num_samples"], 1)
+        self.assertGreater(summary["supervised_tokens"], 0)
         self.assertIn("input_ids", row)
         self.assertEqual(len(row["input_ids"]), len(row["labels"]))
+        self.assertEqual(len(row["input_ids"]), 16)
+        self.assertEqual(row["labels"][-1], IGNORE_INDEX)
 
 
 if __name__ == "__main__":

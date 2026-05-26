@@ -51,6 +51,28 @@ actual vision feature extraction to an optional external image processor.
 - [docs/training_pipeline.md](docs/training_pipeline.md) — full training pipeline.
 - [docs/external_implementation_notes.md](docs/external_implementation_notes.md) — design influences.
 
+## Build pretraining rows
+
+```bash
+python3 -m Tokenizer.tools.build_pretraining_data \
+  --tokenizer-bundle artefacts/tokenizer_bundle \
+  --input Tokenizer/data/sample_multimodal.jsonl \
+  --output artefacts/pretrain.jsonl \
+  --max-length 2048 \
+  --pack \
+  --pad-to-max-length
+
+python3 -m Tokenizer.evals.pretraining_gate \
+  --tokenizer-bundle artefacts/tokenizer_bundle \
+  --input artefacts/pretrain.jsonl \
+  --max-length 2048 \
+  --json
+```
+
+The pretraining builder masks structural labels with `-100`, keeps
+image/video spans aligned, and can pack text-only rows while leaving
+multimodal rows standalone.
+
 ## Evaluation
 
 ```bash
