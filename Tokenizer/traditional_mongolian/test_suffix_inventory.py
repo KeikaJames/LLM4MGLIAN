@@ -62,6 +62,15 @@ class TraditionalMongolianSuffixInventoryTest(unittest.TestCase):
         self.assertEqual(duplicates["ᠳᠠ"], ["DAT_LOC", "PASS"])
         self.assertEqual(duplicates["ᠴᠤ"], ["PROG_JU", "CVB_COORD_JU"])
 
+    def test_inventory_has_no_empty_surface(self):
+        self.assertFalse(
+            [
+                item["id"]
+                for item in ALL_SUFFIXES
+                if any(surface == "" for surface in item["surface"])
+            ]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,9 @@ def strip_all_with_map(text: str) -> tuple[str, list[int]]:
         chars.append(ch)
         boundary_map.append(i + 1)
 
+    if boundary_map:
+        boundary_map[-1] = len(text)
+
     return "".join(chars), boundary_map
 
 
