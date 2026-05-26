@@ -24,8 +24,9 @@ def pack_samples(
         count = 0
 
     for sample in samples:
+        is_multimodal = _has_modality(sample)
         sample = _trim(sample, max_length)
-        if _has_modality(sample):
+        if is_multimodal:
             flush()
             packed.append(sample)
             continue
@@ -78,11 +79,15 @@ def _has_modality(sample: EncodedSample) -> bool:
 def _trim(sample: EncodedSample, max_length: int) -> EncodedSample:
     if len(sample.input_ids) <= max_length:
         return sample
+    modality_spans = {
+        key: [span for span in spans if int(span[1]) <= max_length]
+        for key, spans in sample.modality_spans.items()
+    }
     return EncodedSample(
         input_ids=sample.input_ids[:max_length],
         attention_mask=sample.attention_mask[:max_length],
         labels=sample.labels[:max_length],
         token_offsets=sample.token_offsets[:max_length],
-        modality_spans=sample.modality_spans,
+        modality_spans=modality_spans,
         metadata={**sample.metadata, "truncated": True},
     )
