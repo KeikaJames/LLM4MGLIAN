@@ -81,6 +81,20 @@ class PretrainingBuilderTest(unittest.TestCase):
             sample = builder.encode_text("<ocr> hello")
         self.assertEqual(sample.labels[0], IGNORE_INDEX)
 
+    def test_empty_label_ignore_tokens_disables_masking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            default_builder = PretrainingDataBuilder(bundle, max_length=128)
+            default_sample = default_builder.encode_text("<ocr> hello")
+            builder = PretrainingDataBuilder(
+                bundle, max_length=128, label_ignore_tokens=set()
+            )
+            sample = builder.encode_text("<ocr> hello")
+        # Default behaviour masks at least one structural token (e.g. <bos>,
+        # <ocr>). With an empty ignore set, no token should be masked.
+        self.assertIn(IGNORE_INDEX, default_sample.labels)
+        self.assertNotIn(IGNORE_INDEX, sample.labels)
+
     def test_truncation_does_not_cut_image_span(self):
         with tempfile.TemporaryDirectory() as tmp:
             builder = PretrainingDataBuilder(build_smoke_bundle(tmp), max_length=3)
