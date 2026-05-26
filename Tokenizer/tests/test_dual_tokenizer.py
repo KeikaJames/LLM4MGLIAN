@@ -64,6 +64,28 @@ class DualTokenizerTest(unittest.TestCase):
             ],
         )
 
+    def test_segments_fullwidth_latin_and_digits_as_en_and_misc(self):
+        spans = segment_by_language("Ａ３！test")
+        self.assertEqual(
+            [(span.lang, span.text) for span in spans],
+            [
+                ("en", "Ａ"),
+                ("misc", "３！"),
+                ("en", "test"),
+            ],
+        )
+
+    def test_segments_cjk_punctuation_as_misc(self):
+        spans = segment_by_language("这。图")
+        self.assertEqual(
+            [(span.lang, span.text) for span in spans],
+            [
+                ("zh", "这"),
+                ("misc", "。"),
+                ("zh", "图"),
+            ],
+        )
+
     def test_encode_routes_tracks_to_global_id_ranges(self):
         tokenizer = build_fake_tokenizer()
         result = tokenizer.encode_with_spans("ᠮᠣᠩᠭᠣᠯ 这 test!", add_bos=True, add_eos=True)
