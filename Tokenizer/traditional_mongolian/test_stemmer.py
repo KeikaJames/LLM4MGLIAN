@@ -18,6 +18,7 @@ class TraditionalMongolianStemmerTest(unittest.TestCase):
         self.assertEqual(result.suffix_ids, ["GEN"])
         self.assertEqual(result.boundaries, [0, 5, 8])
         self.assertEqual(result.skeleton_boundaries, [0, 5, 7])
+        self.assertGreaterEqual(result.confidence, 0.70)
 
     def test_plural_case_stack_with_original_boundaries(self):
         word = "ᠪᠢᠴᠢᠭ" + MVS + "ᠦᠳ" + MVS + "ᠦᠨ"
@@ -66,6 +67,19 @@ class TraditionalMongolianStemmerTest(unittest.TestCase):
         result = self.stemmer.analyze("ᠨᠡᠷ")
         self.assertEqual(result.root, "ᠨᠡᠷ")
         self.assertEqual(result.suffixes, [])
+
+    def test_low_confidence_inner_suffix_does_not_split_lexical_word(self):
+        result = self.stemmer.analyze("ᠮᠣᠩᠭᠣᠯ")
+        self.assertEqual(result.root, "ᠮᠣᠩᠭᠣᠯ")
+        self.assertEqual(result.suffixes, [])
+        self.assertEqual(result.confidence, 0.52)
+
+    def test_modern_derived_verb_preserves_stable_root(self):
+        result = self.stemmer.analyze("ᠪᠠᠶᠢᠭᠤᠯᠤᠭᠳᠠᠬᠤ")
+        root_skeleton = strip_all(result.root)
+        self.assertNotEqual(root_skeleton, "ᠪᠠᠶᠢ")
+        self.assertGreaterEqual(len(root_skeleton), len("ᠪᠠᠶᠢᠭᠤᠯ"))
+        self.assertNotEqual(result.suffix_ids, ["CAUS_GUL", "PASS", "PTCP_FUT_QU"])
 
 
 if __name__ == "__main__":

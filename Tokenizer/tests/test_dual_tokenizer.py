@@ -9,6 +9,7 @@ from Tokenizer.multimodal import (
     IMAGE_START,
     expand_image_placeholders,
 )
+from Tokenizer.traditional_mongolian import NNBSP
 from Tokenizer.unified.dual_tokenizer import (
     DualTrackTokenizer,
     SEGMENT,
@@ -76,6 +77,17 @@ class DualTokenizerTest(unittest.TestCase):
             ],
         )
 
+    def test_mongolian_nnbsp_stays_inside_mongolian_span(self):
+        text = "ᠨᠡᠷ" + NNBSP + "ᠦᠦ"
+        spans = segment_by_language(text)
+        self.assertEqual([(span.lang, span.text) for span in spans], [("mn", text)])
+
+        latin = "hello" + NNBSP + "world"
+        self.assertEqual(
+            [(span.lang, span.text) for span in segment_by_language(latin)],
+            [("en", "hello"), ("space", NNBSP), ("en", "world")],
+        )
+
     def test_segments_cjk_punctuation_as_misc(self):
         spans = segment_by_language("这。图")
         self.assertEqual(
@@ -121,6 +133,12 @@ class DualTokenizerTest(unittest.TestCase):
         ids = tokenizer.encode("🙂")
         self.assertGreater(len(ids), 1)
         self.assertEqual(tokenizer.decode(ids), "🙂")
+
+    def test_unknown_hf_track_text_falls_back_to_bytes(self):
+        tokenizer = build_fake_tokenizer()
+        text = "mixed 中 ᠮᠣᠩᠭᠣᠯ 🙂"
+        ids = tokenizer.encode(text)
+        self.assertEqual(tokenizer.decode(ids), text)
 
     def test_decode_strips_hf_boundary_markers(self):
         # Simulate HF vocabs that keep SentencePiece "▁" and GPT-2 "Ġ"

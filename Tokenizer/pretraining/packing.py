@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
-from .builder import EncodedSample
+from .builder import IGNORE_INDEX, EncodedSample
 
 
 def pack_samples(
-    samples: list[EncodedSample], max_length: int, pad_id: int, eos_id: int
+    samples: list[EncodedSample],
+    max_length: int,
+    pad_id: int,
+    eos_id: int,
+    pad_to_max_length: bool = False,
 ) -> list[EncodedSample]:
     if max_length <= 0:
         raise ValueError("max_length must be positive")
@@ -19,6 +23,8 @@ def pack_samples(
         nonlocal current, count
         if current.input_ids:
             current.metadata = {"type": "packed_text", "num_samples": count}
+            if pad_to_max_length:
+                current = _pad(current, max_length, pad_id)
             packed.append(current)
         current = _empty_text_pack()
         count = 0
@@ -26,8 +32,12 @@ def pack_samples(
     for sample in samples:
         is_multimodal = _has_modality(sample)
         sample = _trim(sample, max_length)
+        if not sample.input_ids:
+            continue
         if is_multimodal:
             flush()
+            if pad_to_max_length:
+                sample = _pad(sample, max_length, pad_id)
             packed.append(sample)
             continue
 
@@ -79,15 +89,36 @@ def _has_modality(sample: EncodedSample) -> bool:
 def _trim(sample: EncodedSample, max_length: int) -> EncodedSample:
     if len(sample.input_ids) <= max_length:
         return sample
+    cutoff = max_length
+    for spans in sample.modality_spans.values():
+        for start, end in spans:
+            start_i = int(start)
+            end_i = int(end)
+            if start_i < cutoff < end_i:
+                cutoff = start_i
     modality_spans = {
-        key: [span for span in spans if int(span[1]) <= max_length]
+        key: [span for span in spans if int(span[1]) <= cutoff]
         for key, spans in sample.modality_spans.items()
     }
     return EncodedSample(
-        input_ids=sample.input_ids[:max_length],
-        attention_mask=sample.attention_mask[:max_length],
-        labels=sample.labels[:max_length],
-        token_offsets=sample.token_offsets[:max_length],
+        input_ids=sample.input_ids[:cutoff],
+        attention_mask=sample.attention_mask[:cutoff],
+        labels=sample.labels[:cutoff],
+        token_offsets=sample.token_offsets[:cutoff],
         modality_spans=modality_spans,
         metadata={**sample.metadata, "truncated": True},
+    )
+
+
+def _pad(sample: EncodedSample, max_length: int, pad_id: int) -> EncodedSample:
+    pad_count = max_length - len(sample.input_ids)
+    if pad_count <= 0:
+        return sample
+    return EncodedSample(
+        input_ids=sample.input_ids + [pad_id] * pad_count,
+        attention_mask=sample.attention_mask + [0] * pad_count,
+        labels=sample.labels + [IGNORE_INDEX] * pad_count,
+        token_offsets=sample.token_offsets + [(-1, -1)] * pad_count,
+        modality_spans={key: list(spans) for key, spans in sample.modality_spans.items()},
+        metadata={**sample.metadata, "padded": True},
     )

@@ -24,7 +24,13 @@ def dump(tokenizer: Any, path: str, extra_config: dict[str, Any] | None = None) 
         "vocab": tokenizer.vocab,
         "merges": merges_arr,
         "special_tokens": {"unk": "<unk>"},
-        "config": {"boundary_constrained": True, **(extra_config or {})},
+        "config": {
+            "boundary_constrained": True,
+            "min_boundary_confidence": getattr(
+                tokenizer, "min_boundary_confidence", 0.60
+            ),
+            **(extra_config or {}),
+        },
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)

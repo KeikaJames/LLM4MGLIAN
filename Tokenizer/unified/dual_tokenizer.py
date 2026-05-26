@@ -83,6 +83,7 @@ SPACE_CHARS = {
     "\u00A0",
     "\u202F",
 }
+NNBSP = "\u202F"
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,20 @@ def char_lang(ch: str) -> str:
     return "misc"
 
 
+def _is_mongolian_char(ch: str) -> bool:
+    return in_ranges(ord(ch), MONGOLIAN_RANGES)
+
+
+def contextual_char_lang(text: str, index: int) -> str:
+    ch = text[index]
+    if ch == NNBSP:
+        prev_is_mn = index > 0 and _is_mongolian_char(text[index - 1])
+        next_is_mn = index + 1 < len(text) and _is_mongolian_char(text[index + 1])
+        if prev_is_mn and next_is_mn:
+            return "mn"
+    return char_lang(ch)
+
+
 def special_at(text: str, start: int) -> str | None:
     for token in SPECIAL_TOKEN_TEXTS:
         if text.startswith(token, start):
@@ -144,7 +159,7 @@ def segment_by_language(text: str) -> list[Span]:
             cur_lang = ""
             continue
 
-        lang = char_lang(text[i])
+        lang = contextual_char_lang(text, i)
         if not cur_lang:
             cur_lang = lang
             start = i
@@ -272,9 +287,9 @@ class DualTrackTokenizer:
             elif span.lang == "mn":
                 tokens.extend(self._encode_mongolian(span))
             elif span.lang == "zh":
-                tokens.extend(self.zh.encode_with_offsets(span.text, span.start))
+                tokens.extend(self._encode_hf_track(self.zh, span))
             elif span.lang == "en":
-                tokens.extend(self.en.encode_with_offsets(span.text, span.start))
+                tokens.extend(self._encode_hf_track(self.en, span))
             elif span.lang == "space":
                 tokens.extend(self._encode_space(span))
             else:
@@ -326,6 +341,27 @@ class DualTrackTokenizer:
             )
             for i in local_ids
         ]
+
+    def _encode_hf_track(self, track_tokenizer: HFTrackTokenizer, span: Span) -> list[EncodedToken]:
+        encoded = track_tokenizer.encode_with_offsets(span.text, span.start)
+        if not encoded and span.text:
+            return encode_byte_fallback(
+                span.text, self.vocab, self.unk_id, span.start, "misc"
+            )
+
+        tokens: list[EncodedToken] = []
+        for token in encoded:
+            if token.id != self.unk_id:
+                tokens.append(token)
+                continue
+
+            rel_start = max(0, token.start - span.start)
+            rel_end = min(len(span.text), max(rel_start, token.end - span.start))
+            surface = span.text[rel_start:rel_end] or token.surface or token.token
+            tokens.extend(
+                encode_byte_fallback(surface, self.vocab, self.unk_id, token.start, "misc")
+            )
+        return tokens
 
     def _encode_space(self, span: Span) -> list[EncodedToken]:
         space_id = self.vocab.get("▁", self.unk_id)
