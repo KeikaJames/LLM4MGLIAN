@@ -192,6 +192,14 @@ class HFTrackTokenizer:
         return [self.local_to_global.get(i, self.unk_id) for i in local_ids]
 
 
+def _strip_hf_boundary_markers(text: str) -> str:
+    # HuggingFace tokenizers keep word-boundary markers in their raw token
+    # strings (SentencePiece "▁" / GPT-2 "Ġ"). Mirror HF's
+    # convert_tokens_to_string behavior so decode() yields natural text
+    # instead of artifacts like "▁hello" / "Ġhello".
+    return text.replace("\u2581", " ").replace("\u0120", " ")
+
+
 def make_byte_tokens() -> list[str]:
     return [f"<0x{i:02X}>" for i in range(256)]
 
@@ -413,9 +421,9 @@ class DualTrackTokenizer:
             flush_bytes()
 
             if token.startswith("zh▁"):
-                parts.append(token[3:])
+                parts.append(_strip_hf_boundary_markers(token[3:]))
             elif token.startswith("en▁"):
-                parts.append(token[3:])
+                parts.append(_strip_hf_boundary_markers(token[3:]))
             elif token == "▁":
                 parts.append(" ")
             elif token == "◈":
