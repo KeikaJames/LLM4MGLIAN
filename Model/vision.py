@@ -156,7 +156,19 @@ class VisionInjector(nn.Module):
 
         from Model.omvt import OMVTInjector
 
-        self.omvt = OMVTInjector(self.cfg, self._omvt_cfg)
+        injector = OMVTInjector(self.cfg, self._omvt_cfg)
+
+        # Lazy submodules must be migrated to the parent's current device
+        # and dtype: assigning after `RDTForCausalLM.to('cuda')` does not
+        # auto-migrate, so the first GPU batch would crash with a device
+        # mismatch. Infer the target from an existing parameter; fall back
+        # to MLP encoder's first parameter, then CPU/float32 if the module
+        # is genuinely parameterless (shouldn't happen in practice).
+        target_param = next(self.parameters(), None)
+        if target_param is not None:
+            injector = injector.to(device=target_param.device, dtype=target_param.dtype)
+
+        self.omvt = injector
 
     def forward(
         self,

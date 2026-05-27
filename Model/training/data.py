@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import random
@@ -214,7 +215,11 @@ def _resolve_shards(spec: str | Sequence[str | Path]) -> list[Path]:
         if path.is_dir():
             return sorted(path.glob("*.jsonl"))
         if any(ch in str(spec) for ch in "*?["):
-            return sorted(Path().glob(str(spec)))
+            # ``Path().glob`` cannot accept absolute patterns and rejects
+            # ``**`` outside ``rglob``; ``glob.glob`` handles both natively
+            # and is the right tool for user-supplied shard specs that may
+            # be absolute mount paths like ``/mnt/corpus/*.jsonl``.
+            return sorted(Path(p) for p in glob.glob(str(spec), recursive=True))
         return [path]
     return [Path(p) for p in spec]
 

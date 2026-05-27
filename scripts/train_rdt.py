@@ -218,7 +218,12 @@ def main(argv: list[str] | None = None) -> int:
                 )
     finally:
         logger.close()
-        if not args.smoke and is_main_process():
+        # NOTE: `save_checkpoint` is a collective under FSDP (the
+        # `state_dict(FullStateDictConfig)` call gathers from every rank),
+        # so we must enter it on every rank; the helper internally limits
+        # the actual file write to rank 0. Guarding the call with
+        # `is_main_process()` would deadlock rank 0 at shutdown.
+        if not args.smoke:
             save_checkpoint(
                 train_cfg.output_dir,
                 state.step,
