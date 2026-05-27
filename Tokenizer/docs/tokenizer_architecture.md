@@ -18,11 +18,14 @@ real HuggingFace tokenizers.
   inventories, reverse stemming, and morpheme boundaries used by MorphBPE.
 - `Tokenizer/morphbpe/` implements a boundary-constrained BPE track for
   traditional Mongolian. It uses `MongolStemmer.analyze()` boundaries to prevent
-  merges across root/suffix boundaries.
+  merges across root/suffix boundaries, and seeds the full Mongolian letter
+  alphabet so valid unseen letters still encode at character level instead of
+  falling to `<unk>`.
 - `Tokenizer/generic_bpe/` contains reusable HuggingFace-track and byte-fallback
   helpers.
 - `Tokenizer/unified/` is the routed tokenizer: Mongolian -> MorphBPE,
-  Chinese/English -> HF tracks, specials -> fixed ids, misc -> byte fallback.
+  Chinese/English -> HF tracks, specials -> fixed ids, Mongolian/CJK/Latin
+  punctuation -> misc tokens or byte fallback.
 - `Tokenizer/multimodal/` expands image/video-style placeholders and records
   multimodal token spans. The tokenizer does not process vision features.
 

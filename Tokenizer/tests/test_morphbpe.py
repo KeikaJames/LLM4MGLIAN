@@ -110,7 +110,9 @@ class MorphBPETest(unittest.TestCase):
             },
             stemmer=self.stemmer,
         )
-        self.assertEqual([token.token for token in tokenizer.tokenize_word(word)], [word])
+        self.assertEqual(
+            [token.token for token in tokenizer.tokenize_word(word)], [word]
+        )
 
     def test_control_chars_do_not_crash(self):
         from Tokenizer.traditional_mongolian import FVS1, NNBSP
@@ -145,6 +147,26 @@ class MorphBPETest(unittest.TestCase):
         self.assertNotIn("t", tokenizer.vocab)
         self.assertNotIn("文", tokenizer.vocab)
         self.assertIn("ᠮ", tokenizer.vocab)
+
+    def test_trainer_seeds_mongolian_alphabet_for_unseen_letters(self):
+        trainer = MorphBPETrainer(stemmer=self.stemmer, vocab_size=64, min_pair_freq=2)
+        tokenizer = trainer.train(["ᠮᠣᠩᠭᠣᠯ"])
+
+        self.assertIn("ᠠ", tokenizer.vocab)
+        self.assertNotEqual(tokenizer.encode("ᠠ"), [tokenizer.vocab["<unk>"]])
+        self.assertTrue(tokenizer.seed_alphabet)
+
+    def test_trainer_can_disable_alphabet_seed(self):
+        trainer = MorphBPETrainer(
+            stemmer=self.stemmer,
+            vocab_size=64,
+            min_pair_freq=2,
+            seed_alphabet=False,
+        )
+        tokenizer = trainer.train(["ᠮᠣᠩᠭᠣᠯ"])
+
+        self.assertFalse(tokenizer.seed_alphabet)
+        self.assertEqual(tokenizer.encode("ᠠ"), [tokenizer.vocab["<unk>"]])
 
 
 if __name__ == "__main__":

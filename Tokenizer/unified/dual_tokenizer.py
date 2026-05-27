@@ -22,10 +22,13 @@ try:
         SPECIAL_TOKENS,
         build_misc_tokens,
         build_unified_vocab,
-        make_byte_tokens,
     )
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from Tokenizer.generic_bpe import HFTrackTokenizer, encode_byte_fallback, is_byte_token
+    from Tokenizer.generic_bpe import (
+        HFTrackTokenizer,
+        encode_byte_fallback,
+        is_byte_token,
+    )
     from Tokenizer.traditional_mongolian.stemmer import MongolStemmer
     from Tokenizer.unified.encoded import DualTrackResult, EncodedToken
     from Tokenizer.unified.vocab import (
@@ -33,7 +36,6 @@ except ImportError:  # pragma: no cover - supports direct script execution.
         SPECIAL_TOKENS,
         build_misc_tokens,
         build_unified_vocab,
-        make_byte_tokens,
     )
 
 SPECIAL_TOKEN_TEXTS = tuple(sorted(SPECIAL_TOKENS, key=len, reverse=True))
@@ -42,6 +44,19 @@ MONGOLIAN_RANGES = [
     (0x1800, 0x18AF),
     (0x11660, 0x1167F),
 ]
+
+MONGOLIAN_PUNCTUATION = {
+    "\u1800",
+    "\u1801",
+    "\u1802",
+    "\u1803",
+    "\u1804",
+    "\u1805",
+    "\u1806",
+    "\u1807",
+    "\u1808",
+    "\u1809",
+}
 
 CJK_RANGES = [
     (0x3400, 0x4DBF),
@@ -80,10 +95,10 @@ SPACE_CHARS = {
     "\t",
     "\n",
     "\r",
-    "\u00A0",
-    "\u202F",
+    "\u00a0",
+    "\u202f",
 }
-NNBSP = "\u202F"
+NNBSP = "\u202f"
 
 
 @dataclass(frozen=True)
@@ -103,6 +118,8 @@ def char_lang(ch: str) -> str:
 
     if ch in SPACE_CHARS:
         return "space"
+    if ch in MONGOLIAN_PUNCTUATION:
+        return "misc"
     if in_ranges(cp, MONGOLIAN_RANGES):
         return "mn"
     if in_ranges(cp, DIGIT_RANGES):
@@ -298,7 +315,9 @@ class DualTrackTokenizer:
         if add_eos:
             tokens.append(EncodedToken(self.vocab["<eos>"], "<eos>", "special", -1, -1))
 
-        return DualTrackResult(input_ids=[token.id for token in tokens], tokens=tokens, spans=spans)
+        return DualTrackResult(
+            input_ids=[token.id for token in tokens], tokens=tokens, spans=spans
+        )
 
     def _encode_special(self, span: Span) -> list[EncodedToken]:
         token_id = self.vocab.get(span.text, self.unk_id)
@@ -342,7 +361,9 @@ class DualTrackTokenizer:
             for i in local_ids
         ]
 
-    def _encode_hf_track(self, track_tokenizer: HFTrackTokenizer, span: Span) -> list[EncodedToken]:
+    def _encode_hf_track(
+        self, track_tokenizer: HFTrackTokenizer, span: Span
+    ) -> list[EncodedToken]:
         encoded = track_tokenizer.encode_with_offsets(span.text, span.start)
         if not encoded and span.text:
             return encode_byte_fallback(
@@ -359,7 +380,9 @@ class DualTrackTokenizer:
             rel_end = min(len(span.text), max(rel_start, token.end - span.start))
             surface = span.text[rel_start:rel_end] or token.surface or token.token
             tokens.extend(
-                encode_byte_fallback(surface, self.vocab, self.unk_id, token.start, "misc")
+                encode_byte_fallback(
+                    surface, self.vocab, self.unk_id, token.start, "misc"
+                )
             )
         return tokens
 
@@ -371,7 +394,9 @@ class DualTrackTokenizer:
         ]
 
     def _encode_misc(self, span: Span) -> list[EncodedToken]:
-        return encode_byte_fallback(span.text, self.vocab, self.unk_id, span.start, "misc")
+        return encode_byte_fallback(
+            span.text, self.vocab, self.unk_id, span.start, "misc"
+        )
 
     def decode(self, ids: list[int]) -> str:
         parts: list[str] = []
@@ -428,7 +453,9 @@ def load_morphbpe_tokenizer(morphbpe_model_path: str, stemmer: MongolStemmer) ->
     try:
         from Tokenizer.morphbpe import MorphBPETokenizer
     except ImportError as exc:
-        raise ImportError("Tokenizer.morphbpe.MorphBPETokenizer is not implemented yet") from exc
+        raise ImportError(
+            "Tokenizer.morphbpe.MorphBPETokenizer is not implemented yet"
+        ) from exc
 
     return MorphBPETokenizer.from_file(morphbpe_model_path, stemmer)
 
@@ -497,7 +524,9 @@ def main() -> None:
     if len(sys.argv) < 2:
         print("Usage:")
         print("  python -m Tokenizer.unified.dual_tokenizer segment <text>")
-        print("  python -m Tokenizer.unified.dual_tokenizer build <morphbpe.json> [out.json]")
+        print(
+            "  python -m Tokenizer.unified.dual_tokenizer build <morphbpe.json> [out.json]"
+        )
         return
 
     cmd = sys.argv[1]
@@ -510,7 +539,9 @@ def main() -> None:
 
     if cmd == "build":
         if len(sys.argv) < 3:
-            print("Usage: python -m Tokenizer.unified.dual_tokenizer build <morphbpe.json> [out.json]")
+            print(
+                "Usage: python -m Tokenizer.unified.dual_tokenizer build <morphbpe.json> [out.json]"
+            )
             return
         run_build(sys.argv)
         return

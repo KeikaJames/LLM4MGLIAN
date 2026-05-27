@@ -3,6 +3,10 @@
 import unittest
 
 from Tokenizer.evals.mongolian_boundary_recall import compute_metrics
+from Tokenizer.evals.tokenizer_hit_rate import (
+    build_experimental_tokenizer,
+    compute_hit_rate,
+)
 from Tokenizer.morphbpe.offsets import MorphToken
 from Tokenizer.traditional_mongolian import MVS
 
@@ -26,6 +30,32 @@ class BoundaryRecallEvalTest(unittest.TestCase):
         self.assertGreater(metrics["morpheme_boundaries"], 0)
         self.assertEqual(metrics["crossed_boundary_count"], 0)
         self.assertEqual(metrics["boundary_respecting_rate"], 1.0)
+
+    def test_hit_rate_uses_seeded_mongolian_alphabet(self):
+        train = ["ᠮᠣᠩᠭᠣᠯ"]
+        eval_texts = ["ᠠᠪᠤ ᠮᠣᠩᠭᠣᠯ"]
+        tokenizer = build_experimental_tokenizer(train, vocab_size=64, min_pair_freq=2)
+
+        metrics = compute_hit_rate(eval_texts, tokenizer)
+
+        self.assertEqual(metrics["unk_count"], 0)
+        self.assertEqual(metrics["token_hit_rate"], 1.0)
+        self.assertEqual(metrics["mongolian_word_hit_rate"], 1.0)
+
+    def test_hit_rate_exposes_unseeded_alphabet_misses(self):
+        train = ["ᠮᠣᠩᠭᠣᠯ"]
+        eval_texts = ["ᠠᠪᠤ"]
+        tokenizer = build_experimental_tokenizer(
+            train,
+            vocab_size=64,
+            min_pair_freq=2,
+            seed_alphabet=False,
+        )
+
+        metrics = compute_hit_rate(eval_texts, tokenizer)
+
+        self.assertGreater(metrics["unk_count"], 0)
+        self.assertLess(metrics["token_hit_rate"], 1.0)
 
 
 if __name__ == "__main__":
