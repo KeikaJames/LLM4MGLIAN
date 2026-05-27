@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +21,26 @@ def official_available() -> bool:
     return OfficialMamba3 is not None
 
 
+def _init_dt_bias(
+    nfeatures: int,
+    dt_min: float,
+    dt_max: float,
+    dt_init_floor: float,
+) -> torch.Tensor:
+    """Upstream Mamba-3 dt_bias initialization.
+
+    Samples ``dt`` uniformly in log space between ``dt_min`` and ``dt_max``,
+    floors it, and converts to the additive bias ``dt + log(-expm1(-dt))``
+    so that ``softplus(dt_bias) ≈ dt`` at init.
+    """
+
+    log_lo = math.log(dt_min)
+    log_hi = math.log(dt_max)
+    dt = torch.exp(torch.rand(nfeatures) * (log_hi - log_lo) + log_lo)
+    dt = torch.clamp(dt, min=dt_init_floor)
+    return dt + torch.log(-torch.expm1(-dt))
+
+
 class NaiveSSM(nn.Module):
     def __init__(
         self,
@@ -27,6 +49,9 @@ class NaiveSSM(nn.Module):
         expand: int = 2,
         headdim: int = 64,
         d_conv: int = 4,
+        dt_min: float = 0.001,
+        dt_max: float = 0.1,
+        dt_init_floor: float = 1e-4,
     ):
         super().__init__()
 
@@ -70,8 +95,16 @@ class NaiveSSM(nn.Module):
         )
         self.dt_proj = nn.Linear(self.nheads, self.d_inner, bias=True)
 
+        with torch.no_grad():
+            self.dt_proj.bias.copy_(
+                _init_dt_bias(self.d_inner, dt_min, dt_max, dt_init_floor)
+            )
+        self.dt_proj.bias._no_weight_decay = True  # type: ignore[attr-defined]
+
         self.A_log = nn.Parameter(torch.log(torch.rand(self.nheads, d_state) + 0.5))
+        self.A_log._no_weight_decay = True  # type: ignore[attr-defined]
         self.D = nn.Parameter(torch.ones(self.nheads))
+        self.D._no_weight_decay = True  # type: ignore[attr-defined]
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
 
     def forward(
@@ -177,6 +210,13 @@ class Mamba3Layer(nn.Module):
 
         use_official = bool(cfg.use_official_mamba and OfficialMamba3 is not None)
 
+        if cfg.use_official_mamba and OfficialMamba3 is None:
+            raise RuntimeError(
+                "use_official_mamba=True but mamba_ssm is not importable. "
+                "Install with `pip install mamba-ssm` (requires CUDA) or set "
+                "cfg.use_official_mamba=False to use the NaiveSSM fallback."
+            )
+
         if use_official:
             self.mamba = self._build_official(cfg, layer_idx)
             self.backend = "official"
@@ -187,27 +227,32 @@ class Mamba3Layer(nn.Module):
                 expand=cfg.mamba_expand,
                 headdim=cfg.mamba_headdim,
                 d_conv=cfg.mamba_d_conv,
+                dt_min=cfg.mamba_dt_min,
+                dt_max=cfg.mamba_dt_max,
+                dt_init_floor=cfg.mamba_dt_init_floor,
             )
             self.backend = "fallback"
 
     def _build_official(self, cfg, layer_idx: int | None):
-        try:
-            return OfficialMamba3(
-                d_model=cfg.d_model,
-                d_state=cfg.mamba_d_state,
-                expand=cfg.mamba_expand,
-                headdim=cfg.mamba_headdim,
-                d_conv=cfg.mamba_d_conv,
-                layer_idx=layer_idx,
-            )
-        except TypeError:
-            return OfficialMamba3(
-                d_model=cfg.d_model,
-                d_state=cfg.mamba_d_state,
-                expand=cfg.mamba_expand,
-                headdim=cfg.mamba_headdim,
-                layer_idx=layer_idx,
-            )
+        """Build the upstream Mamba-3 module with cfg-aligned kwargs.
+
+        Upstream `Mamba3.__init__` does NOT accept ``d_conv`` (it bakes the
+        causal short conv into the fused kernel). We forward the parameters
+        it does accept; mismatches will surface as a hard ``TypeError`` so
+        we never silently degrade.
+        """
+
+        return OfficialMamba3(
+            d_model=cfg.d_model,
+            d_state=cfg.mamba_d_state,
+            expand=cfg.mamba_expand,
+            headdim=cfg.mamba_headdim,
+            chunk_size=cfg.mamba_chunk_size,
+            dt_min=cfg.mamba_dt_min,
+            dt_max=cfg.mamba_dt_max,
+            dt_init_floor=cfg.mamba_dt_init_floor,
+            layer_idx=layer_idx,
+        )
 
     def forward(
         self,

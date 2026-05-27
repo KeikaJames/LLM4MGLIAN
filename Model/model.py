@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from Model.blocks import StandardBlock
 from Model.config import RDTConfig
@@ -91,7 +92,8 @@ class RDTForCausalLM(nn.Module):
             h = self.vision(h, input_ids, pixel_values)
 
         for block in self.prelude:
-            h = block(
+            h = self._maybe_ckpt(
+                block,
                 h,
                 word_pos=word_pos,
                 morph_depth=morph_depth,
@@ -112,7 +114,8 @@ class RDTForCausalLM(nn.Module):
         )
 
         for block in self.coda:
-            h = block(
+            h = self._maybe_ckpt(
+                block,
                 h,
                 word_pos=word_pos,
                 morph_depth=morph_depth,
@@ -280,21 +283,121 @@ class RDTForCausalLM(nn.Module):
 
         return loss_sum / targets.numel()
 
+    def _maybe_ckpt(
+        self,
+        block: nn.Module,
+        h: torch.Tensor,
+        word_pos: torch.Tensor | None,
+        morph_depth: torch.Tensor | None,
+        attn_mask: torch.Tensor | None,
+        causal: bool,
+    ) -> torch.Tensor:
+        if (
+            getattr(self.cfg, "grad_ckpt_prelude_coda", False)
+            and self.training
+            and h.requires_grad
+        ):
+            def _fn(x):
+                return block(
+                    x,
+                    word_pos=word_pos,
+                    morph_depth=morph_depth,
+                    attn_mask=attn_mask,
+                    causal=causal,
+                )
+
+            return checkpoint(_fn, h, use_reentrant=False)
+        return block(
+            h,
+            word_pos=word_pos,
+            morph_depth=morph_depth,
+            attn_mask=attn_mask,
+            causal=causal,
+        )
+
     def _default_morph_info(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        bsz, seq_len = input_ids.shape
+        """Derive ``(word_pos, morph_depth)`` from boundary token IDs.
+
+        This is a vectorized counterpart of
+        :func:`Tokenizer.pretraining.derive_morph_info_from_boundary_ids`.
+        Callers that already supply ``word_pos`` / ``morph_depth`` skip this.
+
+        Semantics (see tokenizer-side reference for details):
+
+        * ``word_boundary_id`` opens a new word at depth 0.
+        * ``morpheme_boundary_id`` keeps the current word and bumps depth.
+        * Other special tokens (ids in ``[0, 256)``) reset depth to 0 and
+          stay on the current ``word_pos``; the next non-special content
+          token will inherit ``word_pos`` until a new ``word_boundary``.
+        * Padding positions (``attention_mask == 0``) keep their derived
+          ``word_pos`` so downstream RoPE never sees ``-1``; the mask
+          itself is what zeros out padded contributions.
+        """
+
         device = input_ids.device
+        bsz, seq_len = input_ids.shape
+        cfg = self.cfg
 
-        word_pos = (
-            torch.arange(seq_len, device=device).unsqueeze(0).expand(bsz, seq_len)
+        wb = int(cfg.word_boundary_id)
+        mb = int(cfg.morpheme_boundary_id)
+        special_hi = 256
+
+        is_wb = input_ids == wb
+        is_mb = input_ids == mb
+        is_special = (input_ids >= 0) & (input_ids < special_hi)
+        is_content = ~is_special
+        is_other_special = is_special & ~is_wb & ~is_mb
+
+        # word_pos: cumulative count of word_boundary occurrences with a
+        # per-row shift. If the very first word_boundary appears before
+        # any content token, the first wb anchors word 0 (shift = -1).
+        # Otherwise content tokens implicitly open word 0 and the first
+        # wb opens word 1 (shift = 0).
+        wb_cum = is_wb.long().cumsum(dim=1)
+
+        inf = seq_len + 1
+        any_wb = is_wb.any(dim=1)
+        any_content = is_content.any(dim=1)
+
+        first_wb = torch.where(
+            any_wb,
+            is_wb.long().argmax(dim=1),
+            torch.full((bsz,), inf, device=device, dtype=torch.long),
         )
-        morph_depth = torch.zeros(bsz, seq_len, dtype=torch.long, device=device)
+        first_content = torch.where(
+            any_content,
+            is_content.long().argmax(dim=1),
+            torch.full((bsz,), inf, device=device, dtype=torch.long),
+        )
+        shift = torch.where(
+            first_wb < first_content,
+            torch.full((bsz,), -1, device=device, dtype=torch.long),
+            torch.zeros(bsz, device=device, dtype=torch.long),
+        )
 
-        word_pos = word_pos * attention_mask.to(device=device, dtype=torch.long)
-        return word_pos, morph_depth
+        word_pos = (wb_cum + shift.unsqueeze(-1)).clamp(min=0)
+
+        # morph_depth: cumulative morpheme_boundary count since the most
+        # recent reset (word_boundary or other special). The reset
+        # position itself reads depth 0.
+        cum_inc = is_mb.long().cumsum(dim=1)
+        reset_positions = is_wb | is_other_special
+        reset_value = torch.where(
+            reset_positions, cum_inc, torch.full_like(cum_inc, -1)
+        )
+        last_reset, _ = reset_value.cummax(dim=1)
+        depth = cum_inc - last_reset.clamp(min=0)
+        depth = torch.where(reset_positions, torch.zeros_like(depth), depth)
+
+        if cfg.max_morph_depth > 0:
+            depth = depth.clamp(max=cfg.max_morph_depth - 1)
+
+        return word_pos.to(torch.long), depth.to(torch.long)
+
 
     def _check_inputs(
         self,
@@ -308,11 +411,12 @@ class RDTForCausalLM(nn.Module):
         if input_ids.numel() == 0:
             raise ValueError("input_ids cannot be empty")
 
-        if input_ids.min().item() < 0:
-            raise ValueError("input_ids contain negative ids")
-
-        if input_ids.max().item() >= self.cfg.vocab_size:
-            raise ValueError("input_ids contain ids outside vocab_size")
+        # Dtype + shape checks only; value-range checks are skipped here
+        # to avoid host syncs on the hot path. The embedding lookup will
+        # raise an out-of-range error if vocab bounds are violated, and
+        # we rely on the data pipeline to keep ids well-formed.
+        if input_ids.dtype not in (torch.int32, torch.int64):
+            raise TypeError("input_ids must be int32 or int64")
 
         if attention_mask is not None and attention_mask.shape != input_ids.shape:
             raise ValueError("attention_mask must have shape [B, L]")

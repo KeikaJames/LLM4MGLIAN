@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Mapping
+
 import torch
 import torch.nn as nn
 
 
-class VisionEncoder(nn.Module):
+class MLPVisionEncoder(nn.Module):
+    """Lightweight MLP+LN patch encoder.
+
+    Kept as a fallback for smoke tests and small-data experiments; production
+    VLM training should use ``Model.omvt.OMVTVisionTower`` instead.
+    """
+
     def __init__(self, cfg, patch_pixels: int = 14 * 14 * 3):
         super().__init__()
 
@@ -41,6 +49,10 @@ class VisionEncoder(nn.Module):
         x = self.patch_embed(pixel_values)
         x = x + self.encoder(x)
         return self.to_llm(x)
+
+
+# Back-compat alias; legacy code expecting VisionEncoder still works.
+VisionEncoder = MLPVisionEncoder
 
 
 def inject_visual_features(
@@ -108,24 +120,76 @@ def inject_visual_features(
 
 
 class VisionInjector(nn.Module):
-    def __init__(self, cfg, patch_pixels: int = 14 * 14 * 3):
+    """Dispatcher between MLP fallback and OMVT vision tower.
+
+    When ``pixel_values`` is a ``Tensor``, the lightweight :class:`MLPVisionEncoder`
+    is used (legacy / smoke path). When it is a ``Mapping`` (the multi-scale
+    batch produced by :class:`Model.omvt.MultiScalePatcher`), the OMVT tower
+    + Perceiver compressor are dispatched instead.
+
+    The OMVT tower is constructed lazily on the first dict input so smoke runs
+    that never see vision input pay no parameter cost.
+    """
+
+    def __init__(
+        self,
+        cfg,
+        patch_pixels: int = 14 * 14 * 3,
+        omvt_cfg=None,
+    ):
         super().__init__()
 
         self.cfg = cfg
         self.patch_pixels = patch_pixels
-        self.encoder = VisionEncoder(cfg, patch_pixels)
+        self.encoder = MLPVisionEncoder(cfg, patch_pixels)
+
+        self._omvt_cfg = omvt_cfg
+        self.omvt = None  # type: ignore[assignment]
+
+    def _ensure_omvt(self) -> None:
+        if self.omvt is not None:
+            return
+        if self._omvt_cfg is None:
+            from Model.config import OMVTConfig
+
+            self._omvt_cfg = OMVTConfig()
+
+        from Model.omvt import OMVTInjector
+
+        injector = OMVTInjector(self.cfg, self._omvt_cfg)
+
+        # Lazy submodules must be migrated to the parent's current device
+        # and dtype: assigning after `RDTForCausalLM.to('cuda')` does not
+        # auto-migrate, so the first GPU batch would crash with a device
+        # mismatch. Infer the target from an existing parameter; fall back
+        # to MLP encoder's first parameter, then CPU/float32 if the module
+        # is genuinely parameterless (shouldn't happen in practice).
+        target_param = next(self.parameters(), None)
+        if target_param is not None:
+            injector = injector.to(device=target_param.device, dtype=target_param.dtype)
+
+        self.omvt = injector
 
     def forward(
         self,
         inputs_embeds: torch.Tensor,
         input_ids: torch.Tensor,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.Tensor | Mapping[str, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         if pixel_values is None:
             return inputs_embeds
 
-        visual_features = self.encoder(pixel_values)
+        if isinstance(pixel_values, Mapping):
+            self._ensure_omvt()
+            visual_features = self.omvt(pixel_values)
+            return inject_visual_features(
+                inputs_embeds=inputs_embeds,
+                input_ids=input_ids,
+                visual_features=visual_features,
+                image_patch_id=self.cfg.image_patch_id,
+            )
 
+        visual_features = self.encoder(pixel_values)
         return inject_visual_features(
             inputs_embeds=inputs_embeds,
             input_ids=input_ids,

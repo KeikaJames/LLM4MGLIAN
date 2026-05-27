@@ -99,3 +99,74 @@ def derive_morph_info_from_offsets(
         prev_end = end
 
     return word_positions, morph_depths
+
+
+def derive_morph_info_from_boundary_ids(
+    input_ids,
+    word_boundary_id: int,
+    morpheme_boundary_id: int,
+    special_id_range: tuple = (0, 256),
+    max_depth: int | None = None,
+) -> tuple[list[int], list[int]]:
+    """Derive ``(word_pos, morph_depth)`` from token IDs at runtime.
+
+    Fallback used when a batch lacks precomputed morphology fields. Rules:
+
+    * ``<word_boundary>`` (``▁``) opens a new word (``word_pos`` += 1)
+      at depth 0. The very first ``word_boundary`` either anchors word 0
+      (if no content has been seen yet) or word 1 (if content tokens
+      preceded it; those tokens then implicitly belong to word 0).
+    * ``<morpheme>`` (``◈``) stays inside the current word and increments
+      ``morph_depth``.
+    * Other specials in ``special_id_range`` (BOS/EOS/image/etc.) reset
+      depth to 0; their ``word_pos`` is the current word (or 0 before any
+      word has opened). They do **not** advance ``word_pos``.
+    * Other tokens inherit ``(word_pos, depth)``.
+
+    Output positions are non-negative. ``max_depth`` (if given and > 0)
+    caps ``morph_depth`` to ``max_depth - 1``; non-positive values are
+    treated as "no cap" to keep depths non-negative.
+    """
+
+    lo, hi = special_id_range
+    word_positions: list[int] = []
+    morph_depths: list[int] = []
+
+    cap = max_depth - 1 if (max_depth is not None and max_depth > 0) else None
+
+    cur_word = -1
+    cur_depth = 0
+
+    for token_id in input_ids:
+        tid = int(token_id)
+        is_special = lo <= tid < hi
+
+        if is_special and tid == word_boundary_id:
+            cur_word += 1
+            cur_depth = 0
+            word_positions.append(max(cur_word, 0))
+            morph_depths.append(0)
+            continue
+
+        if is_special and tid == morpheme_boundary_id:
+            cur_depth += 1
+            if cap is not None:
+                cur_depth = min(cur_depth, cap)
+            word_positions.append(max(cur_word, 0))
+            morph_depths.append(cur_depth)
+            continue
+
+        if is_special:
+            cur_depth = 0
+            word_positions.append(max(cur_word, 0))
+            morph_depths.append(0)
+            continue
+
+        # content token: opens word 0 if none has been opened yet
+        if cur_word < 0:
+            cur_word = 0
+            cur_depth = 0
+        word_positions.append(cur_word)
+        morph_depths.append(cur_depth)
+
+    return word_positions, morph_depths

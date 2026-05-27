@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from Model.blocks import RecurrentBlock
 
@@ -17,6 +18,7 @@ class RecurrentCore(nn.Module):
         self.inject = cfg.inject_embedding
         self.inject_scale = cfg.inject_scale
         self.use_act = cfg.use_act
+        self.grad_ckpt = bool(getattr(cfg, "grad_ckpt_recurrent", False))
 
         if self.inject_scale < 0:
             raise ValueError("inject_scale must be non-negative")
@@ -90,7 +92,7 @@ class RecurrentCore(nn.Module):
             if self.inject:
                 h = h + self.inject_scale * e0
 
-            h = self.block(
+            h = self._run_block(
                 h,
                 word_pos=word_pos,
                 morph_depth=morph_depth,
@@ -102,6 +104,33 @@ class RecurrentCore(nn.Module):
             "steps_used": total_steps,
             "ponder_cost": e0.new_tensor(0.0),
         }
+
+    def _run_block(
+        self,
+        h: torch.Tensor,
+        word_pos: torch.Tensor | None,
+        morph_depth: torch.Tensor | None,
+        attn_mask: torch.Tensor | None,
+        causal: bool,
+    ) -> torch.Tensor:
+        if self.grad_ckpt and self.training and h.requires_grad:
+            def _fn(h_in):
+                return self.block(
+                    h_in,
+                    word_pos=word_pos,
+                    morph_depth=morph_depth,
+                    attn_mask=attn_mask,
+                    causal=causal,
+                )
+
+            return checkpoint(_fn, h, use_reentrant=False)
+        return self.block(
+            h,
+            word_pos=word_pos,
+            morph_depth=morph_depth,
+            attn_mask=attn_mask,
+            causal=causal,
+        )
 
     def _forward_act(
         self,
@@ -128,7 +157,7 @@ class RecurrentCore(nn.Module):
             if self.inject:
                 h = h + self.inject_scale * e0
 
-            h = self.block(
+            h = self._run_block(
                 h,
                 word_pos=word_pos,
                 morph_depth=morph_depth,
@@ -152,11 +181,13 @@ class RecurrentCore(nn.Module):
             halt_accum = new_halt
             running = running * (1.0 - reached)
 
-            if running.sum().item() == 0:
-                break
+        # NOTE: previously this used `running.sum().item() == 0` to break
+        # early, but that forces a host sync every step. We unroll the full
+        # act_max_steps and just account for never-halted positions below.
 
-        if running.sum().item() > 0:
-            output = output + running.to(dtype).unsqueeze(-1) * h
+        # Leftover probability mass for positions that never crossed the
+        # threshold: commit current h with the remaining `running` weight.
+        output = output + running.to(dtype).unsqueeze(-1) * h
 
         denom = (
             attn_mask.to(device=e0.device, dtype=torch.float32).sum()
