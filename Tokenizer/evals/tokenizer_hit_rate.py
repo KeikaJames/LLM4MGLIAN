@@ -25,8 +25,15 @@ from Tokenizer.unified.dual_tokenizer import (
 class _LongestMatchTokenizer:
     def __init__(self, tokens: Iterable[str]):
         ordered = list(dict.fromkeys(tok for tok in tokens if tok))
+        if "<unk>" not in ordered:
+            ordered.insert(0, "<unk>")
         self._vocab = {tok: idx for idx, tok in enumerate(ordered)}
-        self._ordered = sorted(self._vocab, key=len, reverse=True)
+        self._unk_id = self._vocab["<unk>"]
+        self._ordered = sorted(
+            (tok for tok in self._vocab if tok != "<unk>"),
+            key=len,
+            reverse=True,
+        )
 
     def get_vocab(self) -> dict[str, int]:
         return dict(self._vocab)
@@ -58,6 +65,7 @@ class _LongestMatchTokenizer:
                     match = token
                     break
             if match is None:
+                out.append((self._unk_id, cursor, cursor + 1))
                 cursor += 1
                 continue
             out.append((self._vocab[match], cursor, cursor + len(match)))
