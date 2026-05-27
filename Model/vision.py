@@ -71,6 +71,11 @@ def inject_visual_features(
     out = inputs_embeds.clone()
 
     if visual_features.ndim == 2:
+        if bsz != 1:
+            raise ValueError(
+                "unbatched visual_features are only supported when batch size is 1"
+            )
+
         if visual_features.shape != (n_patches, dim):
             raise ValueError(
                 f"expected visual_features {(n_patches, dim)}, got {tuple(visual_features.shape)}"

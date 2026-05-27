@@ -183,7 +183,7 @@ class Mamba3Layer(nn.Module):
         else:
             self.mamba = NaiveSSM(
                 d_model=cfg.d_model,
-                d_state=min(cfg.mamba_d_state, 16),
+                d_state=cfg.mamba_d_state,
                 expand=cfg.mamba_expand,
                 headdim=cfg.mamba_headdim,
                 d_conv=cfg.mamba_d_conv,
@@ -222,6 +222,11 @@ class Mamba3Layer(nn.Module):
         if attn_mask is not None:
             if attn_mask.shape != x.shape[:2]:
                 raise ValueError("attn_mask must have shape [B, L]")
+            if not isinstance(self.mamba, NaiveSSM) and not bool(attn_mask.all()):
+                raise ValueError(
+                    "official Mamba backend does not support masked state updates; "
+                    "use fallback Mamba or pass an all-ones attention mask"
+                )
             mask = attn_mask.to(device=x.device, dtype=x.dtype).unsqueeze(-1)
 
         residual = x if mask is None else x * mask
