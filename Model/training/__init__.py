@@ -1,0 +1,62 @@
+# -*- coding: utf-8 -*-
+
+"""RDT training utilities.
+
+This package exposes the data-loading primitives that the previous
+flat ``Model/training.py`` module provided, plus the new optimizer,
+distributed, checkpoint, and training-loop helpers required for
+formal pretraining.
+
+The legacy import paths are preserved:
+
+    from Model.training import JsonlPretrainingDataset, PretrainingCollator
+"""
+
+from Model.training.checkpoint import (
+    load_checkpoint,
+    resume_state,
+    save_checkpoint,
+)
+from Model.training.data import (
+    JsonlPretrainingDataset,
+    PretrainingCollator,
+    StreamingJsonlDataset,
+    build_dataloader,
+)
+from Model.training.dist import (
+    apply_parallelism,
+    init_distributed,
+    is_main_process,
+    wrap_ddp,
+    wrap_fsdp,
+)
+from Model.training.logging import RankZeroLogger, throughput_str
+from Model.training.loop import TrainState, evaluate, train_one_step
+from Model.training.optim import (
+    build_optimizer,
+    build_scheduler,
+    param_groups_with_no_decay,
+)
+
+__all__ = [
+    "JsonlPretrainingDataset",
+    "PretrainingCollator",
+    "RankZeroLogger",
+    "StreamingJsonlDataset",
+    "TrainState",
+    "apply_parallelism",
+    "build_dataloader",
+    "build_optimizer",
+    "build_scheduler",
+    "evaluate",
+    "init_distributed",
+    "is_main_process",
+    "load_checkpoint",
+    "param_groups_with_no_decay",
+    "resume_state",
+    "save_checkpoint",
+    "throughput_str",
+    "train_one_step",
+    "wrap_ddp",
+    "wrap_fsdp",
+]

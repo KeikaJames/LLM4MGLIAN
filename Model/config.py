@@ -152,7 +152,15 @@ class RDTConfig:
     mamba_d_conv: int = 4
     mamba_expand: int = 2
     mamba_headdim: int = 64
+    mamba_dt_min: float = 0.001
+    mamba_dt_max: float = 0.1
+    mamba_dt_init_floor: float = 1e-4
+    mamba_chunk_size: int = 64
     use_official_mamba: bool = True
+
+    grad_ckpt_recurrent: bool = False
+    grad_ckpt_blocks: bool = False
+    grad_ckpt_prelude_coda: bool = False
 
     rope_theta: float = 10000.0
     use_morphological_rope: bool = True
@@ -356,11 +364,197 @@ def base_config() -> RDTConfig:
     )
 
 
+def pretrain_config() -> RDTConfig:
+    """~1.1B RDT for the first formal text pretraining wave.
+
+    Defaults to grad checkpointing on; FSDP/DDP can override via TrainingConfig.
+    """
+
+    return RDTConfig(
+        d_model=2048,
+        n_heads=16,
+        head_dim=128,
+        kv_lora_rank=512,
+        rope_head_dim=64,
+        nope_head_dim=64,
+        ffn_hidden=8192,
+        ffn_multiple=256,
+        n_prelude=3,
+        n_coda=3,
+        mamba_per_block=5,
+        attn_per_block=1,
+        recurrent_steps=8,
+        max_seq_len=4096,
+        use_official_mamba=True,
+        bidirectional=False,
+        grad_ckpt_recurrent=True,
+        grad_ckpt_prelude_coda=True,
+        loss_chunk_size=8192,
+    )
+
+
+@dataclass
+class TrainingConfig:
+    """Top-level training-loop configuration.
+
+    Intentionally decoupled from ``RDTConfig`` so model shape and training
+    schedule can be edited independently. Field naming follows the order
+    of how the loop consumes them: data → optimizer → schedule → dist →
+    checkpoint → logging.
+    """
+
+    # data
+    train_data: str = ""
+    eval_data: str = ""
+    seq_len: int = 4096
+    micro_batch_size: int = 1
+    grad_accum_steps: int = 1
+    num_workers: int = 2
+    pin_memory: bool = True
+    pack_sequences: bool = True
+    shuffle_buffer: int = 1024
+
+    # optimizer (AdamW, decoupled WD)
+    optimizer: str = "adamw"
+    learning_rate: float = 3e-4
+    weight_decay: float = 0.1
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.95
+    adam_eps: float = 1e-8
+    grad_clip: float = 1.0
+
+    # schedule (warmup + cosine to min_lr_ratio)
+    max_steps: int = 100_000
+    warmup_steps: int = 2_000
+    lr_decay_steps: int | None = None  # defaults to max_steps
+    min_lr_ratio: float = 0.1
+
+    # precision / memory
+    precision: str = "bf16"  # one of: fp32, bf16, fp16
+    grad_ckpt_recurrent: bool | None = None  # None ⇒ inherit from RDTConfig
+    grad_ckpt_prelude_coda: bool | None = None
+    bptt_window: int | None = None
+    use_loss_chunking: bool = True
+
+    # recurrent step schedule (curriculum)
+    recurrent_steps_start: int | None = None  # if set, ramps to cfg.recurrent_steps
+    recurrent_steps_ramp: int = 0
+
+    # distributed
+    dist_backend: str = "nccl"  # nccl | gloo
+    parallel: str = "single"  # single | ddp | fsdp
+    fsdp_mixed_precision: str = "bf16"
+    fsdp_cpu_offload: bool = False
+
+    # checkpoint
+    output_dir: str = "outputs/run"
+    save_every: int = 1000
+    keep_last_n: int = 3
+    resume: str = ""  # path to a checkpoint dir or ""
+
+    # logging
+    log_every: int = 10
+    eval_every: int = 1000
+    eval_max_batches: int = 32
+    tensorboard: bool = True
+    wandb_project: str = ""
+
+    # reproducibility
+    seed: int = 42
+
+    def __post_init__(self) -> None:
+        if self.seq_len <= 0:
+            raise ValueError("seq_len must be positive")
+        if self.micro_batch_size <= 0:
+            raise ValueError("micro_batch_size must be positive")
+        if self.grad_accum_steps <= 0:
+            raise ValueError("grad_accum_steps must be positive")
+        if self.max_steps <= 0:
+            raise ValueError("max_steps must be positive")
+        if self.warmup_steps < 0:
+            raise ValueError("warmup_steps must be non-negative")
+        if not (0.0 <= self.min_lr_ratio <= 1.0):
+            raise ValueError("min_lr_ratio must be in [0, 1]")
+        if self.precision not in {"fp32", "bf16", "fp16"}:
+            raise ValueError(f"unknown precision: {self.precision}")
+        if self.parallel not in {"single", "ddp", "fsdp"}:
+            raise ValueError(f"unknown parallel mode: {self.parallel}")
+        if self.lr_decay_steps is None:
+            self.lr_decay_steps = self.max_steps
+        if self.recurrent_steps_ramp < 0:
+            raise ValueError("recurrent_steps_ramp must be non-negative")
+
+
+@dataclass
+class OMVTConfig:
+    """Orientation-aware Multiscript Vision Tower config.
+
+    All sizes are conservative defaults suitable for smoke tests; production
+    pretraining should override ``image_size``, ``patch_sizes``, ``compress_to``
+    based on data inspection.
+    """
+
+    image_size: int = 224
+    in_channels: int = 3
+
+    # multi-scale patch shapes (height, width)
+    vertical_patch: tuple[int, int] = (32, 8)
+    horizontal_patch: tuple[int, int] = (8, 32)
+    square_patch: tuple[int, int] = (16, 16)
+    layout_patch: tuple[int, int] = (56, 56)
+
+    # mixer hyperparams
+    d_vision: int = 512
+    n_vertical_layers: int = 2
+    n_horizontal_layers: int = 2
+    n_local_attn_layers: int = 2
+    n_layout_layers: int = 1
+    vision_n_heads: int = 8
+    vision_ffn_hidden: int = 2048
+    vision_dropout: float = 0.0
+
+    # router (geometric, no LM dependency)
+    router_min_route_prob: float = 0.05
+    router_temperature: float = 1.0
+
+    # Perceiver compressor
+    compress_to: int = 256  # output visual tokens per image
+    compressor_layers: int = 2
+    compressor_heads: int = 8
+
+    # projector to RDT embedding space
+    projector_hidden: int = 0  # 0 ⇒ single Linear
+
+    # SSL loss weights (Phase 1 vision pretraining)
+    w_ocr: float = 1.0
+    w_masked_patch: float = 1.0
+    w_orientation: float = 0.2
+    w_layout_order: float = 0.2
+
+    # joint training loss weights (Phase 3)
+    w_lm: float = 1.0
+    w_patch_text_contrastive: float = 0.1
+    w_layout: float = 0.1
+
+    def __post_init__(self) -> None:
+        if self.image_size <= 0:
+            raise ValueError("image_size must be positive")
+        if self.d_vision <= 0:
+            raise ValueError("d_vision must be positive")
+        if self.compress_to <= 0:
+            raise ValueError("compress_to must be positive")
+        if self.in_channels not in (1, 3):
+            raise ValueError("in_channels must be 1 or 3")
+        if self.d_vision % self.vision_n_heads != 0:
+            raise ValueError("d_vision must be divisible by vision_n_heads")
+
+
 def main() -> None:
     for name, make_cfg in [
         ("tiny", tiny_config),
         ("small", small_config),
         ("base", base_config),
+        ("pretrain", pretrain_config),
     ]:
         cfg = make_cfg()
         print(f"{name}:")
