@@ -1,0 +1,371 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+try:
+    from Tokenizer.unified.vocab import SPECIAL_TOKENS, SEGMENT
+except ImportError:
+    SPECIAL_TOKENS = {
+        "<pad>": 0,
+        "<unk>": 1,
+        "<bos>": 2,
+        "<eos>": 3,
+        "<img>": 4,
+        "<image>": 5,
+        "<image_start>": 6,
+        "<image_patch>": 7,
+        "<image_end>": 8,
+        "<video>": 9,
+        "<video_start>": 10,
+        "<video_patch>": 11,
+        "<video_end>": 12,
+        "<bbox>": 13,
+        "<ocr>": 14,
+        "<ocr_start>": 15,
+        "<ocr_end>": 16,
+        "▁": 17,
+        "◈": 18,
+        "<doc>": 19,
+        "<table>": 20,
+        "<layout>": 21,
+        "<audio>": 22,
+        "<audio_start>": 23,
+        "<audio_patch>": 24,
+        "<audio_end>": 25,
+    }
+
+    SEGMENT = {
+        "special": (0, 256),
+        "mongolian": (256, 24576),
+        "chinese": (24576, 49152),
+        "english": (49152, 63488),
+        "misc": (63488, 65536),
+    }
+
+
+VOCAB_SIZE = 65536
+IGNORE_INDEX = -100
+
+PAD_ID = SPECIAL_TOKENS["<pad>"]
+UNK_ID = SPECIAL_TOKENS["<unk>"]
+BOS_ID = SPECIAL_TOKENS["<bos>"]
+EOS_ID = SPECIAL_TOKENS["<eos>"]
+IMG_ID = SPECIAL_TOKENS["<img>"]
+
+IMAGE_ID = SPECIAL_TOKENS["<image>"]
+IMAGE_START_ID = SPECIAL_TOKENS["<image_start>"]
+IMAGE_PATCH_ID = SPECIAL_TOKENS["<image_patch>"]
+IMAGE_END_ID = SPECIAL_TOKENS["<image_end>"]
+
+VIDEO_ID = SPECIAL_TOKENS["<video>"]
+VIDEO_START_ID = SPECIAL_TOKENS["<video_start>"]
+VIDEO_PATCH_ID = SPECIAL_TOKENS["<video_patch>"]
+VIDEO_END_ID = SPECIAL_TOKENS["<video_end>"]
+
+BBOX_ID = SPECIAL_TOKENS["<bbox>"]
+OCR_ID = SPECIAL_TOKENS["<ocr>"]
+OCR_START_ID = SPECIAL_TOKENS["<ocr_start>"]
+OCR_END_ID = SPECIAL_TOKENS["<ocr_end>"]
+
+WORD_BOUNDARY_ID = SPECIAL_TOKENS["▁"]
+MORPHEME_BOUNDARY_ID = SPECIAL_TOKENS["◈"]
+
+DOC_ID = SPECIAL_TOKENS["<doc>"]
+TABLE_ID = SPECIAL_TOKENS["<table>"]
+LAYOUT_ID = SPECIAL_TOKENS["<layout>"]
+
+AUDIO_ID = SPECIAL_TOKENS["<audio>"]
+AUDIO_START_ID = SPECIAL_TOKENS["<audio_start>"]
+AUDIO_PATCH_ID = SPECIAL_TOKENS["<audio_patch>"]
+AUDIO_END_ID = SPECIAL_TOKENS["<audio_end>"]
+
+
+@dataclass
+class RDTConfig:
+    vocab_size: int = VOCAB_SIZE
+    ignore_index: int = IGNORE_INDEX
+
+    pad_id: int = PAD_ID
+    unk_id: int = UNK_ID
+    bos_id: int = BOS_ID
+    eos_id: int = EOS_ID
+
+    img_id: int = IMG_ID
+
+    image_id: int = IMAGE_ID
+    image_start_id: int = IMAGE_START_ID
+    image_patch_id: int = IMAGE_PATCH_ID
+    image_end_id: int = IMAGE_END_ID
+
+    video_id: int = VIDEO_ID
+    video_start_id: int = VIDEO_START_ID
+    video_patch_id: int = VIDEO_PATCH_ID
+    video_end_id: int = VIDEO_END_ID
+
+    bbox_id: int = BBOX_ID
+    ocr_id: int = OCR_ID
+    ocr_start_id: int = OCR_START_ID
+    ocr_end_id: int = OCR_END_ID
+
+    word_boundary_id: int = WORD_BOUNDARY_ID
+    morpheme_boundary_id: int = MORPHEME_BOUNDARY_ID
+
+    doc_id: int = DOC_ID
+    table_id: int = TABLE_ID
+    layout_id: int = LAYOUT_ID
+
+    audio_id: int = AUDIO_ID
+    audio_start_id: int = AUDIO_START_ID
+    audio_patch_id: int = AUDIO_PATCH_ID
+    audio_end_id: int = AUDIO_END_ID
+
+    d_model: int = 768
+    n_heads: int = 12
+    head_dim: int = 64
+
+    kv_lora_rank: int = 256
+    q_lora_rank: int = 0
+    rope_head_dim: int = 32
+    nope_head_dim: int = 32
+
+    ffn_hidden: int = 2048
+    ffn_multiple: int = 256
+
+    n_prelude: int = 2
+    n_coda: int = 2
+    mamba_per_block: int = 5
+    attn_per_block: int = 1
+
+    recurrent_steps: int = 8
+    inject_embedding: bool = True
+    inject_scale: float = 1.0
+
+    use_act: bool = False
+    act_threshold: float = 0.99
+    act_max_steps: int = 32
+    act_ponder_cost: float = 0.01
+
+    mamba_d_state: int = 128
+    mamba_d_conv: int = 4
+    mamba_expand: int = 2
+    mamba_headdim: int = 64
+    use_official_mamba: bool = True
+
+    rope_theta: float = 10000.0
+    use_morphological_rope: bool = True
+    max_morph_depth: int = 8
+
+    max_seq_len: int = 4096
+
+    bidirectional: bool = True
+    reverse_loss_weight: float = 0.5
+
+    dropout: float = 0.0
+    rmsnorm_eps: float = 1e-5
+    init_std: float = 0.02
+    tie_word_embeddings: bool = True
+
+    dtype: str = "bfloat16"
+
+    def __post_init__(self) -> None:
+        self._check_tokens()
+        self._check_dims()
+        self._check_depth()
+        self._check_objectives()
+
+    def _check_tokens(self) -> None:
+        if self.vocab_size != VOCAB_SIZE:
+            raise ValueError(f"vocab_size must be {VOCAB_SIZE}")
+
+        lo, hi = SEGMENT["special"]
+        ids = [
+            self.pad_id,
+            self.unk_id,
+            self.bos_id,
+            self.eos_id,
+            self.img_id,
+            self.image_id,
+            self.image_start_id,
+            self.image_patch_id,
+            self.image_end_id,
+            self.video_id,
+            self.video_start_id,
+            self.video_patch_id,
+            self.video_end_id,
+            self.bbox_id,
+            self.ocr_id,
+            self.ocr_start_id,
+            self.ocr_end_id,
+            self.word_boundary_id,
+            self.morpheme_boundary_id,
+            self.doc_id,
+            self.table_id,
+            self.layout_id,
+            self.audio_id,
+            self.audio_start_id,
+            self.audio_patch_id,
+            self.audio_end_id,
+        ]
+
+        for token_id in ids:
+            if not (lo <= token_id < hi):
+                raise ValueError(f"special id out of range: {token_id}")
+
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate special token ids")
+
+    def _check_dims(self) -> None:
+        if self.d_model != self.n_heads * self.head_dim:
+            raise ValueError("d_model must equal n_heads * head_dim")
+
+        if self.rope_head_dim + self.nope_head_dim != self.head_dim:
+            raise ValueError("rope_head_dim + nope_head_dim must equal head_dim")
+
+        if self.rope_head_dim % 2 != 0:
+            raise ValueError("rope_head_dim must be even")
+
+        if self.d_model % self.mamba_headdim != 0:
+            raise ValueError("d_model must be divisible by mamba_headdim")
+
+        if self.ffn_hidden % self.ffn_multiple != 0:
+            raise ValueError("ffn_hidden must be divisible by ffn_multiple")
+
+        if self.kv_lora_rank <= 0:
+            raise ValueError("kv_lora_rank must be positive")
+
+        if self.q_lora_rank < 0:
+            raise ValueError("q_lora_rank must be non-negative")
+
+    def _check_depth(self) -> None:
+        if self.n_prelude < 0 or self.n_coda < 0:
+            raise ValueError("n_prelude and n_coda must be non-negative")
+
+        if self.mamba_per_block < 0 or self.attn_per_block < 0:
+            raise ValueError("block layer counts must be non-negative")
+
+        if self.mamba_per_block + self.attn_per_block <= 0:
+            raise ValueError("recurrent block cannot be empty")
+
+        if self.recurrent_steps <= 0:
+            raise ValueError("recurrent_steps must be positive")
+
+        if self.use_act and self.act_max_steps <= 0:
+            raise ValueError("act_max_steps must be positive")
+
+        if self.inject_scale < 0:
+            raise ValueError("inject_scale must be non-negative")
+
+    def _check_objectives(self) -> None:
+        if self.reverse_loss_weight < 0:
+            raise ValueError("reverse_loss_weight must be non-negative")
+
+        if self.act_ponder_cost < 0:
+            raise ValueError("act_ponder_cost must be non-negative")
+
+        if not (0.0 <= self.dropout < 1.0):
+            raise ValueError("dropout must be in [0, 1)")
+
+        if self.rmsnorm_eps <= 0:
+            raise ValueError("rmsnorm_eps must be positive")
+
+        if self.init_std <= 0:
+            raise ValueError("init_std must be positive")
+
+        if not (0.0 < self.act_threshold <= 1.0):
+            raise ValueError("act_threshold must be in (0, 1]")
+
+        if self.max_morph_depth <= 0:
+            raise ValueError("max_morph_depth must be positive")
+
+        if self.max_seq_len <= 0:
+            raise ValueError("max_seq_len must be positive")
+
+    @property
+    def block_layers(self) -> int:
+        return self.mamba_per_block + self.attn_per_block
+
+    @property
+    def effective_depth(self) -> int:
+        steps = self.act_max_steps if self.use_act else self.recurrent_steps
+        return self.n_prelude + self.block_layers * steps + self.n_coda
+
+    @property
+    def actual_layers(self) -> int:
+        return self.n_prelude + self.block_layers + self.n_coda
+
+
+def tiny_config() -> RDTConfig:
+    return RDTConfig(
+        d_model=512,
+        n_heads=8,
+        head_dim=64,
+        kv_lora_rank=128,
+        rope_head_dim=32,
+        nope_head_dim=32,
+        ffn_hidden=1536,
+        ffn_multiple=256,
+        n_prelude=2,
+        n_coda=2,
+        mamba_per_block=5,
+        attn_per_block=1,
+        recurrent_steps=4,
+        max_seq_len=2048,
+        use_official_mamba=False,
+    )
+
+
+def small_config() -> RDTConfig:
+    return RDTConfig(
+        d_model=1024,
+        n_heads=16,
+        head_dim=64,
+        kv_lora_rank=256,
+        ffn_hidden=3072,
+        ffn_multiple=256,
+        n_prelude=3,
+        n_coda=3,
+        mamba_per_block=5,
+        attn_per_block=1,
+        recurrent_steps=8,
+        max_seq_len=4096,
+    )
+
+
+def base_config() -> RDTConfig:
+    return RDTConfig(
+        d_model=2048,
+        n_heads=32,
+        head_dim=64,
+        kv_lora_rank=512,
+        ffn_hidden=6144,
+        ffn_multiple=256,
+        n_prelude=4,
+        n_coda=4,
+        mamba_per_block=5,
+        attn_per_block=1,
+        recurrent_steps=16,
+        max_seq_len=8192,
+    )
+
+
+def main() -> None:
+    for name, make_cfg in [
+        ("tiny", tiny_config),
+        ("small", small_config),
+        ("base", base_config),
+    ]:
+        cfg = make_cfg()
+        print(f"{name}:")
+        print(f"  d_model={cfg.d_model}")
+        print(f"  actual_layers={cfg.actual_layers}")
+        print(f"  effective_depth={cfg.effective_depth}")
+        print(f"  recurrent_steps={cfg.recurrent_steps}")
+        print(f"  vocab_size={cfg.vocab_size}")
+        print()
+
+
+if __name__ == "__main__":
+    main()
