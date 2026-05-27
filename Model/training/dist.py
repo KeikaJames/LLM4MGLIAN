@@ -31,12 +31,17 @@ def is_main_process() -> bool:
     return get_rank() == 0
 
 
-def init_distributed(backend: str = "nccl") -> tuple[int, int, int]:
+def init_distributed(backend: str | None = None) -> tuple[int, int, int]:
     """Initialize torch.distributed from env vars.
 
     Returns ``(rank, world_size, local_rank)``. If env vars are missing,
     runs in single-process mode and returns ``(0, 1, 0)``.
+    ``backend`` defaults to ``nccl`` (auto-falls back to ``gloo`` when CUDA
+    is unavailable).
     """
+
+    if backend is None:
+        backend = "nccl"
 
     if dist.is_initialized():
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))

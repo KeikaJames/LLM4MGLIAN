@@ -38,6 +38,15 @@ class BoundaryDerivationTest(unittest.TestCase):
         # depth would be 0,1,2,3,4,4; clamp to max 2
         self.assertEqual(md, [0, 1, 2, 2, 2, 2])
 
+    def test_max_depth_zero_means_no_clamp(self):
+        # ``max_depth=0`` previously made the cap ``-1`` and produced
+        # negative depths; the function now treats non-positive values as
+        # "no cap" so depths stay non-negative.
+        ids = [WB, MB, MB, 300]
+        _wp, md = derive_morph_info_from_boundary_ids(ids, WB, MB, max_depth=0)
+        self.assertEqual(md, [0, 1, 2, 2])
+        self.assertTrue(all(d >= 0 for d in md))
+
 
 if __name__ == "__main__":
     unittest.main()

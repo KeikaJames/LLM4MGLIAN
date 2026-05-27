@@ -75,7 +75,17 @@ class StreamingJsonlDataset(IterableDataset):
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
 
-        rank_shards = self.paths[self.rank :: self.world_size]
+        # When the shard count is smaller than ``world_size`` strict
+        # round-robin partitioning would leave some ranks with zero
+        # shards. Returning an empty iterator on those ranks deadlocks
+        # collective ops (the active ranks still march through
+        # ``forward``/``backward``). Fall back to a **replicated** stream
+        # so every rank sees every shard; rank-aware RNG already
+        # decorrelates the shuffle order per rank.
+        if 0 < len(self.paths) < self.world_size:
+            rank_shards = list(self.paths)
+        else:
+            rank_shards = self.paths[self.rank :: self.world_size]
         if not rank_shards:
             return []
         return rank_shards[worker_id::num_workers]

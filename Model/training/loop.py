@@ -57,7 +57,7 @@ def train_one_step(
     optimizer.zero_grad(set_to_none=True)
 
     device_type = device.type if device.type in ("cuda", "cpu") else "cpu"
-    loss_accum = 0.0
+    loss_terms: list[torch.Tensor] = []
     token_count = 0
 
     rec_steps = None
@@ -66,6 +66,11 @@ def train_one_step(
 
     for _ in range(cfg.grad_accum_steps):
         batch = next(batch_iter)
+        # Count tokens on the CPU mask **before** moving to device so the
+        # ``.sum()`` does not force a host-sync against the GPU stream.
+        cpu_mask = batch.get("attention_mask")
+        if isinstance(cpu_mask, torch.Tensor):
+            token_count += int(cpu_mask.sum().item())
         batch = _to_device(batch, device)
 
         with _autocast_ctx(cfg.precision, device_type):
@@ -81,8 +86,10 @@ def train_one_step(
         loss = out["loss"] / cfg.grad_accum_steps
         loss.backward()
 
-        loss_accum += float(loss.detach().item()) * cfg.grad_accum_steps
-        token_count += int(batch["attention_mask"].sum().item())
+        # Keep the per-microstep loss as a detached tensor; we only sync
+        # to host once per optimizer step to avoid stalling the training
+        # loop on the device queue.
+        loss_terms.append(loss.detach())
 
     if cfg.grad_clip and cfg.grad_clip > 0:
         if hasattr(model, "clip_grad_norm_"):
@@ -98,9 +105,15 @@ def train_one_step(
     optimizer.step()
     scheduler.step()
 
+    if loss_terms:
+        # One host-sync per optimizer step instead of per micro-step.
+        loss_sum = torch.stack(loss_terms).sum().item() * cfg.grad_accum_steps
+    else:
+        loss_sum = 0.0
+
     state.step += 1
     state.tokens_seen += token_count
-    state.last_loss = loss_accum / max(1, cfg.grad_accum_steps)
+    state.last_loss = loss_sum / max(1, cfg.grad_accum_steps)
     return {
         "loss": state.last_loss,
         "grad_norm": grad_norm_val,

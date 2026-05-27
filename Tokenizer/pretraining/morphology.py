@@ -123,13 +123,16 @@ def derive_morph_info_from_boundary_ids(
       word has opened). They do **not** advance ``word_pos``.
     * Other tokens inherit ``(word_pos, depth)``.
 
-    Output positions are non-negative. ``max_depth`` (if given) caps
-    ``morph_depth`` to ``max_depth - 1``.
+    Output positions are non-negative. ``max_depth`` (if given and > 0)
+    caps ``morph_depth`` to ``max_depth - 1``; non-positive values are
+    treated as "no cap" to keep depths non-negative.
     """
 
     lo, hi = special_id_range
     word_positions: list[int] = []
     morph_depths: list[int] = []
+
+    cap = max_depth - 1 if (max_depth is not None and max_depth > 0) else None
 
     cur_word = -1
     cur_depth = 0
@@ -147,8 +150,8 @@ def derive_morph_info_from_boundary_ids(
 
         if is_special and tid == morpheme_boundary_id:
             cur_depth += 1
-            if max_depth is not None:
-                cur_depth = min(cur_depth, max_depth - 1)
+            if cap is not None:
+                cur_depth = min(cur_depth, cap)
             word_positions.append(max(cur_word, 0))
             morph_depths.append(cur_depth)
             continue

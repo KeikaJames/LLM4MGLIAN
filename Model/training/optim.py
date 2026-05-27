@@ -12,6 +12,15 @@ import torch.nn as nn
 
 from Model.config import TrainingConfig
 
+try:  # optional: keep optim usable even if rmsnorm import fails for any reason
+    from Model.layers.rmsnorm import RMSNorm as _RMSNorm
+except Exception:  # pragma: no cover - defensive
+    _RMSNorm = None
+
+_NORM_TYPES: tuple[type, ...] = (
+    (nn.LayerNorm, nn.GroupNorm, _RMSNorm) if _RMSNorm is not None else (nn.LayerNorm, nn.GroupNorm)
+)
+
 
 def param_groups_with_no_decay(
     model: nn.Module,
@@ -28,13 +37,7 @@ def param_groups_with_no_decay(
     seen: set[int] = set()
 
     for module in model.modules():
-        is_norm = isinstance(module, (nn.LayerNorm, nn.GroupNorm))
-        try:
-            from Model.layers.rmsnorm import RMSNorm
-
-            is_norm = is_norm or isinstance(module, RMSNorm)
-        except Exception:  # pragma: no cover - defensive
-            pass
+        is_norm = isinstance(module, _NORM_TYPES)
 
         for name, param in module.named_parameters(recurse=False):
             if not param.requires_grad:

@@ -82,9 +82,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--bptt-window", type=int, default=None)
     p.add_argument("--num-workers", type=int, default=2)
+    p.add_argument("--dist-backend", choices=["nccl", "gloo"], default="nccl")
+    p.add_argument(
+        "--grad-ckpt-recurrent",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="auto = inherit from RDTConfig; on/off override the model setting",
+    )
+    p.add_argument(
+        "--grad-ckpt-prelude-coda",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="auto = inherit from RDTConfig; on/off override the model setting",
+    )
     p.add_argument("--smoke", action="store_true", help="run 4 in-memory steps")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args(argv)
+
+
+def _tri_to_bool(value: str) -> bool | None:
+    if value == "auto":
+        return None
+    return value == "on"
 
 
 def _build_model_cfg(args: argparse.Namespace) -> RDTConfig:
@@ -94,6 +113,20 @@ def _build_model_cfg(args: argparse.Namespace) -> RDTConfig:
     if args.smoke and args.seq_len is None:
         cfg = replace(cfg, max_seq_len=64)
     return cfg
+
+
+def _apply_train_overrides(model_cfg: RDTConfig, train_cfg: TrainingConfig) -> RDTConfig:
+    """Project ``TrainingConfig`` knobs that live on ``RDTConfig`` into the
+    model config so they take effect at construction time."""
+
+    overrides: dict = {}
+    if train_cfg.grad_ckpt_recurrent is not None:
+        overrides["grad_ckpt_recurrent"] = bool(train_cfg.grad_ckpt_recurrent)
+    if train_cfg.grad_ckpt_prelude_coda is not None:
+        overrides["grad_ckpt_prelude_coda"] = bool(train_cfg.grad_ckpt_prelude_coda)
+    if overrides:
+        model_cfg = replace(model_cfg, **overrides)
+    return model_cfg
 
 
 def _build_train_cfg(args: argparse.Namespace, model_cfg: RDTConfig) -> TrainingConfig:
@@ -112,6 +145,9 @@ def _build_train_cfg(args: argparse.Namespace, model_cfg: RDTConfig) -> Training
         precision=args.precision,
         grad_clip=args.grad_clip,
         parallel=args.dist,
+        dist_backend=args.dist_backend,
+        grad_ckpt_recurrent=_tri_to_bool(args.grad_ckpt_recurrent),
+        grad_ckpt_prelude_coda=_tri_to_bool(args.grad_ckpt_prelude_coda),
         output_dir=args.output,
         save_every=args.save_every,
         log_every=args.log_every,
@@ -138,7 +174,9 @@ def _smoke_batches(model_cfg: RDTConfig, train_cfg: TrainingConfig):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    rank, world_size, local_rank = init_distributed()
+    model_cfg_preview = _build_model_cfg(args)
+    train_cfg_preview = _build_train_cfg(args, model_cfg_preview)
+    rank, world_size, local_rank = init_distributed(backend=train_cfg_preview.dist_backend)
     if args.dist != "single" and world_size == 1 and not args.smoke:
         print(
             "[warn] --dist != single but world_size=1; running single-process",
@@ -151,8 +189,9 @@ def main(argv: list[str] | None = None) -> int:
         f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
     )
 
-    model_cfg = _build_model_cfg(args)
-    train_cfg = _build_train_cfg(args, model_cfg)
+    model_cfg = model_cfg_preview
+    train_cfg = train_cfg_preview
+    model_cfg = _apply_train_overrides(model_cfg, train_cfg)
 
     if is_main_process():
         Path(train_cfg.output_dir).mkdir(parents=True, exist_ok=True)

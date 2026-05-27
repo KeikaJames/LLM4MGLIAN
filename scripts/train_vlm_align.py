@@ -25,9 +25,9 @@ from Model.config import (
     tiny_config,
 )
 from Model.model import RDTForCausalLM
-from Model.omvt import OMVTInjector, OMVTVisionTower
+from Model.omvt import OMVTInjector
 from Model.omvt.patcher import collate_omvt_batch
-from Model.training import RankZeroLogger, build_optimizer
+from Model.training import RankZeroLogger, build_optimizer, build_scheduler
 
 
 def parse_args(argv=None):
@@ -80,9 +80,10 @@ def main(argv=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     rdt_cfg = tiny_config()
-    # cap seq_len for smoke speed and to match our synthetic layout
+    # cap seq_len to the synthetic layout (tiny config is 2048 by default but
+    # the smoke layout is much shorter)
     from dataclasses import replace
-    rdt_cfg = replace(rdt_cfg, max_seq_len=max(rdt_cfg.max_seq_len, args.seq_len))
+    rdt_cfg = replace(rdt_cfg, max_seq_len=args.seq_len)
 
     omvt_cfg = _build_omvt_cfg(args)
 
@@ -109,7 +110,10 @@ def main(argv=None):
         precision="fp32",
     )
     trainable = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.05)
+    if not trainable:
+        raise ValueError("model has no trainable parameters")
+    optimizer = build_optimizer(model, train_cfg)
+    scheduler = build_scheduler(optimizer, train_cfg)
 
     Path(args.output).mkdir(parents=True, exist_ok=True)
     logger = RankZeroLogger(args.output, enable_tensorboard=False)
@@ -142,6 +146,7 @@ def main(argv=None):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(trainable, 1.0)
         optimizer.step()
+        scheduler.step()
 
         logger.log(step, {"loss": float(loss.detach())})
 
