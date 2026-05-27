@@ -64,8 +64,15 @@ class RDTForCausalLM(nn.Module):
         word_pos: torch.Tensor | None = None,
         morph_depth: torch.Tensor | None = None,
         steps: int | None = None,
-    ) -> dict[str, torch.Tensor | dict]:
+        bptt_window: int | None = None,
+        return_logits: bool = True,
+        loss_chunk_size: int | None = None,
+    ) -> dict[str, torch.Tensor | dict | None]:
         self._check_inputs(input_ids, attention_mask, labels)
+        if loss_chunk_size is None:
+            loss_chunk_size = self.cfg.loss_chunk_size
+        elif loss_chunk_size <= 0:
+            raise ValueError("loss_chunk_size must be positive")
 
         bsz, seq_len = input_ids.shape
 
@@ -101,6 +108,7 @@ class RDTForCausalLM(nn.Module):
             attn_mask=attention_mask,
             causal=True,
             steps=steps,
+            bptt_window=bptt_window,
         )
 
         for block in self.coda:
@@ -113,17 +121,28 @@ class RDTForCausalLM(nn.Module):
             )
 
         h = self.final_norm(h)
-        logits = self.lm_head(h)
+        logits = None
 
         loss = None
         loss_parts: dict[str, float] = {}
 
         if labels is not None:
-            loss, loss_parts = self._losses(h, logits, labels, rec_info)
+            if not return_logits and loss_chunk_size is not None:
+                loss, loss_parts = self._losses_chunked(
+                    h,
+                    labels,
+                    rec_info,
+                    loss_chunk_size,
+                )
+            else:
+                logits = self.lm_head(h)
+                loss, loss_parts = self._losses(h, logits, labels, rec_info)
+        elif return_logits:
+            logits = self.lm_head(h)
 
         return {
             "loss": loss,
-            "logits": logits,
+            "logits": logits if return_logits else None,
             "loss_parts": loss_parts,
             "rec_info": rec_info,
         }
@@ -142,6 +161,34 @@ class RDTForCausalLM(nn.Module):
         if self.reverse_head is not None:
             rev_logits = self.reverse_head(h)
             reverse = self._reverse_loss(rev_logits, labels)
+            loss = loss + self.cfg.reverse_loss_weight * reverse
+            parts["reverse"] = float(reverse.detach())
+
+        ponder = rec_info.get("ponder_cost")
+        if self.cfg.use_act and isinstance(ponder, torch.Tensor):
+            loss = loss + self.cfg.act_ponder_cost * ponder
+            parts["ponder"] = float(ponder.detach())
+
+        return loss, parts
+
+    def _losses_chunked(
+        self,
+        h: torch.Tensor,
+        labels: torch.Tensor,
+        rec_info: dict,
+        chunk_size: int,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        forward = self._chunked_causal_loss(h, labels, self.lm_head, chunk_size)
+        loss = forward
+        parts = {"forward": float(forward.detach())}
+
+        if self.reverse_head is not None:
+            reverse = self._chunked_reverse_loss(
+                h,
+                labels,
+                self.reverse_head,
+                chunk_size,
+            )
             loss = loss + self.cfg.reverse_loss_weight * reverse
             parts["reverse"] = float(reverse.detach())
 
@@ -178,6 +225,60 @@ class RDTForCausalLM(nn.Module):
             targets,
             ignore_index=self.cfg.ignore_index,
         )
+
+    def _chunked_causal_loss(
+        self,
+        h: torch.Tensor,
+        labels: torch.Tensor,
+        head: nn.Linear,
+        chunk_size: int,
+    ) -> torch.Tensor:
+        return self._chunked_token_loss(
+            h[:, :-1].reshape(-1, h.size(-1)),
+            labels[:, 1:].reshape(-1),
+            head,
+            chunk_size,
+        )
+
+    def _chunked_reverse_loss(
+        self,
+        h: torch.Tensor,
+        labels: torch.Tensor,
+        head: nn.Linear,
+        chunk_size: int,
+    ) -> torch.Tensor:
+        return self._chunked_token_loss(
+            h[:, 1:].reshape(-1, h.size(-1)),
+            labels[:, :-1].reshape(-1),
+            head,
+            chunk_size,
+        )
+
+    def _chunked_token_loss(
+        self,
+        hidden: torch.Tensor,
+        targets: torch.Tensor,
+        head: nn.Linear,
+        chunk_size: int,
+    ) -> torch.Tensor:
+        valid = targets != self.cfg.ignore_index
+        if hidden.numel() == 0 or not bool(valid.any()):
+            return hidden.sum() * 0.0
+
+        hidden = hidden[valid]
+        targets = targets[valid]
+        loss_sum = hidden.new_zeros(())
+
+        for start in range(0, hidden.size(0), chunk_size):
+            end = min(start + chunk_size, hidden.size(0))
+            logits = F.linear(hidden[start:end], head.weight, head.bias)
+            loss_sum = loss_sum + F.cross_entropy(
+                logits,
+                targets[start:end],
+                reduction="sum",
+            )
+
+        return loss_sum / targets.numel()
 
     def _default_morph_info(
         self,

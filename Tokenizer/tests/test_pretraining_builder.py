@@ -37,7 +37,21 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertEqual(sample.labels[0], IGNORE_INDEX)
         self.assertEqual(sample.labels[1:], sample.input_ids[1:])
         self.assertEqual(len(sample.token_offsets), len(sample.input_ids))
+        self.assertEqual(len(sample.word_pos), len(sample.input_ids))
+        self.assertEqual(len(sample.morph_depth), len(sample.input_ids))
         self.assertEqual(sample.modality_spans["image_token_spans"], [])
+
+    def test_morph_features_reset_at_spaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            builder = PretrainingDataBuilder(
+                bundle, max_length=128, add_bos=False, add_eos=False
+            )
+            sample = builder.encode_text("ᠮᠣᠩᠭᠣᠯ test")
+
+        space_idx = sample.input_ids.index(bundle.tokenizer.vocab["▁"])
+        self.assertEqual(sample.morph_depth[space_idx], 0)
+        self.assertLess(sample.word_pos[space_idx - 1], sample.word_pos[space_idx + 1])
 
     def test_encode_image_text(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -53,7 +67,9 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertEqual(len(sample.modality_spans["image_token_spans"]), 1)
         self.assertEqual(sample.metadata["images"], ["x.jpg"])
         start, end = sample.modality_spans["image_token_spans"][0]
-        self.assertTrue(all(label == IGNORE_INDEX for label in sample.labels[start:end]))
+        self.assertTrue(
+            all(label == IGNORE_INDEX for label in sample.labels[start:end])
+        )
         self.assertEqual(sample.labels[0], IGNORE_INDEX)
         self.assertGreater(
             sum(1 for label in sample.labels if label != IGNORE_INDEX),
@@ -113,7 +129,9 @@ class PretrainingBuilderTest(unittest.TestCase):
     def test_pack_samples_for_text_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)
-            builder = PretrainingDataBuilder(bundle, max_length=64, add_bos=False, add_eos=False)
+            builder = PretrainingDataBuilder(
+                bundle, max_length=64, add_bos=False, add_eos=False
+            )
             first = builder.encode_text("hello")
             second = builder.encode_text("test")
             packed = pack_samples(
@@ -126,11 +144,15 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertEqual(packed[0].metadata["num_samples"], 2)
         self.assertLessEqual(len(packed[0].input_ids), 64)
         self.assertEqual(len(packed[0].labels), len(packed[0].attention_mask))
+        self.assertEqual(len(packed[0].word_pos), len(packed[0].input_ids))
+        self.assertGreater(max(packed[0].word_pos), max(first.word_pos))
 
     def test_pack_samples_can_pad_to_max_length(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)
-            builder = PretrainingDataBuilder(bundle, max_length=64, add_bos=False, add_eos=False)
+            builder = PretrainingDataBuilder(
+                bundle, max_length=64, add_bos=False, add_eos=False
+            )
             sample = builder.encode_text("hello")
             packed = pack_samples(
                 [sample],
@@ -143,11 +165,15 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertEqual(len(packed[0].input_ids), 8)
         self.assertEqual(packed[0].attention_mask[-1], 0)
         self.assertEqual(packed[0].labels[-1], IGNORE_INDEX)
+        self.assertEqual(packed[0].word_pos[-1], 0)
+        self.assertEqual(packed[0].morph_depth[-1], 0)
 
     def test_pack_samples_trims_modality_spans_to_sequence_length(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)
-            builder = PretrainingDataBuilder(bundle, max_length=128, add_bos=False, add_eos=False)
+            builder = PretrainingDataBuilder(
+                bundle, max_length=128, add_bos=False, add_eos=False
+            )
             image_sample = builder.encode_json_obj(
                 {
                     "type": "image_text",
@@ -168,7 +194,9 @@ class PretrainingBuilderTest(unittest.TestCase):
     def test_pack_trim_does_not_leave_partial_image_tokens(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)
-            builder = PretrainingDataBuilder(bundle, max_length=128, add_bos=False, add_eos=False)
+            builder = PretrainingDataBuilder(
+                bundle, max_length=128, add_bos=False, add_eos=False
+            )
             image_sample = builder.encode_json_obj(
                 {
                     "type": "image_text",
@@ -200,12 +228,18 @@ class PretrainingBuilderTest(unittest.TestCase):
             inp = os.path.join(tmp, "input.jsonl")
             out = os.path.join(tmp, "out.jsonl")
             with open(inp, "w", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "type": "image_text",
-                    "text": "文字 <image>",
-                    "images": ["x.jpg"],
-                    "image_sizes": [[14, 14]],
-                }, ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "image_text",
+                            "text": "文字 <image>",
+                            "images": ["x.jpg"],
+                            "image_sizes": [[14, 14]],
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -235,6 +269,8 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertGreater(summary["supervised_tokens"], 0)
         self.assertIn("input_ids", row)
         self.assertEqual(len(row["input_ids"]), len(row["labels"]))
+        self.assertEqual(len(row["input_ids"]), len(row["word_pos"]))
+        self.assertEqual(len(row["input_ids"]), len(row["morph_depth"]))
         self.assertEqual(len(row["input_ids"]), 16)
         self.assertEqual(row["labels"][-1], IGNORE_INDEX)
 

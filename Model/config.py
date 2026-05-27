@@ -157,6 +157,7 @@ class RDTConfig:
     rope_theta: float = 10000.0
     use_morphological_rope: bool = True
     max_morph_depth: int = 8
+    use_sdpa_attention: bool = True
 
     max_seq_len: int = 4096
 
@@ -167,6 +168,7 @@ class RDTConfig:
     rmsnorm_eps: float = 1e-5
     init_std: float = 0.02
     tie_word_embeddings: bool = True
+    loss_chunk_size: int | None = None
 
     dtype: str = "bfloat16"
 
@@ -282,6 +284,9 @@ class RDTConfig:
 
         if self.max_seq_len <= 0:
             raise ValueError("max_seq_len must be positive")
+
+        if self.loss_chunk_size is not None and self.loss_chunk_size <= 0:
+            raise ValueError("loss_chunk_size must be positive")
 
     @property
     def block_layers(self) -> int:

@@ -45,11 +45,18 @@ def pack_samples(
         extra_mask = list(sample.attention_mask)
         extra_labels = list(sample.labels)
         extra_offsets = list(sample.token_offsets)
+        extra_word_pos = list(sample.word_pos)
+        extra_morph_depth = list(sample.morph_depth)
         if current.input_ids:
+            word_base = _next_word_pos(current.word_pos)
             extra_ids = [eos_id] + extra_ids
             extra_mask = [1] + extra_mask
             extra_labels = [eos_id] + extra_labels
             extra_offsets = [(-1, -1)] + extra_offsets
+            extra_word_pos = [word_base] + [
+                pos + word_base + 1 for pos in extra_word_pos
+            ]
+            extra_morph_depth = [0] + extra_morph_depth
 
         if len(current.input_ids) + len(extra_ids) > max_length:
             flush()
@@ -57,11 +64,15 @@ def pack_samples(
             extra_mask = list(sample.attention_mask)
             extra_labels = list(sample.labels)
             extra_offsets = list(sample.token_offsets)
+            extra_word_pos = list(sample.word_pos)
+            extra_morph_depth = list(sample.morph_depth)
 
         current.input_ids.extend(extra_ids[:max_length])
         current.attention_mask.extend(extra_mask[:max_length])
         current.labels.extend(extra_labels[:max_length])
         current.token_offsets.extend(extra_offsets[:max_length])
+        current.word_pos.extend(extra_word_pos[:max_length])
+        current.morph_depth.extend(extra_morph_depth[:max_length])
         count += 1
 
     flush()
@@ -74,6 +85,8 @@ def _empty_text_pack() -> EncodedSample:
         attention_mask=[],
         labels=[],
         token_offsets=[],
+        word_pos=[],
+        morph_depth=[],
         modality_spans={"image_token_spans": [], "video_token_spans": []},
         metadata={"type": "packed_text", "num_samples": 0},
     )
@@ -105,6 +118,8 @@ def _trim(sample: EncodedSample, max_length: int) -> EncodedSample:
         attention_mask=sample.attention_mask[:cutoff],
         labels=sample.labels[:cutoff],
         token_offsets=sample.token_offsets[:cutoff],
+        word_pos=sample.word_pos[:cutoff],
+        morph_depth=sample.morph_depth[:cutoff],
         modality_spans=modality_spans,
         metadata={**sample.metadata, "truncated": True},
     )
@@ -119,6 +134,14 @@ def _pad(sample: EncodedSample, max_length: int, pad_id: int) -> EncodedSample:
         attention_mask=sample.attention_mask + [0] * pad_count,
         labels=sample.labels + [IGNORE_INDEX] * pad_count,
         token_offsets=sample.token_offsets + [(-1, -1)] * pad_count,
-        modality_spans={key: list(spans) for key, spans in sample.modality_spans.items()},
+        word_pos=sample.word_pos + [0] * pad_count,
+        morph_depth=sample.morph_depth + [0] * pad_count,
+        modality_spans={
+            key: list(spans) for key, spans in sample.modality_spans.items()
+        },
         metadata={**sample.metadata, "padded": True},
     )
+
+
+def _next_word_pos(word_pos: list[int]) -> int:
+    return (max(word_pos) + 1) if word_pos else 0

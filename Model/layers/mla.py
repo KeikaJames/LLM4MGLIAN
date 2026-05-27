@@ -24,6 +24,10 @@ class MLA(nn.Module):
         self.kv_lora_rank = cfg.kv_lora_rank
         self.q_lora_rank = cfg.q_lora_rank
         self.dropout = cfg.dropout
+        self.use_sdpa = bool(
+            getattr(cfg, "use_sdpa_attention", True)
+            and hasattr(F, "scaled_dot_product_attention")
+        )
 
         if self.head_dim != self.nope_dim + self.rope_dim:
             raise ValueError("head_dim must equal nope_head_dim + rope_head_dim")
@@ -160,6 +164,68 @@ class MLA(nn.Module):
         return k, v
 
     def _attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attn_mask: torch.Tensor | None,
+        causal: bool,
+    ) -> torch.Tensor:
+        if self.use_sdpa:
+            return self._attention_sdpa(q, k, v, attn_mask=attn_mask, causal=causal)
+
+        return self._attention_math(q, k, v, attn_mask=attn_mask, causal=causal)
+
+    def _attention_sdpa(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attn_mask: torch.Tensor | None,
+        causal: bool,
+    ) -> torch.Tensor:
+        bsz, _heads, q_len, _dim = q.shape
+        k_len = k.shape[-2]
+        dropout_p = self.dropout if self.training and self.dropout > 0 else 0.0
+
+        if attn_mask is None:
+            return F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                dropout_p=dropout_p,
+                is_causal=causal,
+                scale=self.scale,
+            )
+
+        key_mask = attn_mask.to(device=q.device, dtype=torch.bool).view(
+            bsz,
+            1,
+            1,
+            k_len,
+        )
+        if causal:
+            causal_mask = torch.ones(
+                q_len,
+                k_len,
+                dtype=torch.bool,
+                device=q.device,
+            ).tril()
+            sdpa_mask = key_mask & causal_mask.view(1, 1, q_len, k_len)
+        else:
+            sdpa_mask = key_mask
+
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=dropout_p,
+            is_causal=False,
+            scale=self.scale,
+        )
+
+    def _attention_math(
         self,
         q: torch.Tensor,
         k: torch.Tensor,

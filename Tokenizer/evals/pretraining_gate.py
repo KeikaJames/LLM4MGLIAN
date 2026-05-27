@@ -8,7 +8,12 @@ import json
 import sys
 from typing import Any
 
-from Tokenizer.pretraining import IGNORE_INDEX, EncodedSample, PretrainingDataBuilder
+from Tokenizer.pretraining import (
+    IGNORE_INDEX,
+    EncodedSample,
+    PretrainingDataBuilder,
+    derive_morph_info_from_offsets,
+)
 from Tokenizer.unified.bundle import TokenizerBundle
 
 
@@ -29,6 +34,7 @@ def run_gate(
     total_tokens = 0
     unk_count = 0
     supervised_tokens = 0
+    max_morph_depth = 0
     for idx, obj in enumerate(_iter_input(input_path)):
         if _is_encoded_row(obj):
             try:
@@ -50,6 +56,7 @@ def run_gate(
         total_tokens += len(sample.input_ids)
         unk_count += sample.input_ids.count(bundle.tokenizer.unk_id)
         supervised_tokens += sum(1 for label in sample.labels if label != IGNORE_INDEX)
+        max_morph_depth = max(max_morph_depth, max(sample.morph_depth, default=0))
         failures.extend(_validate_sample(bundle, sample, text, idx))
 
     metrics = {
@@ -58,6 +65,7 @@ def run_gate(
         "supervised_rate": (supervised_tokens / total_tokens) if total_tokens else 0.0,
         "unk_rate": (unk_count / total_tokens) if total_tokens else 0.0,
         "max_len": max((len(sample.input_ids) for sample in samples), default=0),
+        "max_morph_depth": max_morph_depth,
     }
     if not samples:
         failures.append({"scope": "dataset", "message": "no valid samples"})
@@ -99,20 +107,37 @@ def _iter_input(path: str):
 
 
 def _is_encoded_row(obj: dict[str, Any]) -> bool:
-    required = {"input_ids", "attention_mask", "labels", "token_offsets", "modality_spans"}
+    required = {
+        "input_ids",
+        "attention_mask",
+        "labels",
+        "token_offsets",
+        "modality_spans",
+    }
     return required.issubset(obj)
 
 
 def _sample_from_encoded_row(obj: dict[str, Any]) -> EncodedSample:
     modality_spans = obj.get("modality_spans") or {}
+    token_offsets = [tuple(item) for item in obj["token_offsets"]]
+    word_pos = obj.get("word_pos")
+    morph_depth = obj.get("morph_depth")
+    if word_pos is None or morph_depth is None:
+        word_pos, morph_depth = derive_morph_info_from_offsets(token_offsets)
     return EncodedSample(
         input_ids=[int(item) for item in obj["input_ids"]],
         attention_mask=[int(item) for item in obj["attention_mask"]],
         labels=[int(item) for item in obj["labels"]],
-        token_offsets=[tuple(item) for item in obj["token_offsets"]],
+        token_offsets=token_offsets,
+        word_pos=[int(item) for item in word_pos],
+        morph_depth=[int(item) for item in morph_depth],
         modality_spans={
-            "image_token_spans": [tuple(span) for span in modality_spans.get("image_token_spans", [])],
-            "video_token_spans": [tuple(span) for span in modality_spans.get("video_token_spans", [])],
+            "image_token_spans": [
+                tuple(span) for span in modality_spans.get("image_token_spans", [])
+            ],
+            "video_token_spans": [
+                tuple(span) for span in modality_spans.get("video_token_spans", [])
+            ],
         },
         metadata=dict(obj.get("metadata") or {}),
     )
@@ -133,27 +158,70 @@ def _validate_sample(
     failures: list[dict[str, Any]] = []
     n = len(sample.input_ids)
     if len(sample.labels) != n or len(sample.attention_mask) != n:
-        failures.append({"sample": idx, "message": "input_ids/labels/attention_mask length mismatch"})
+        failures.append(
+            {
+                "sample": idx,
+                "message": "input_ids/labels/attention_mask length mismatch",
+            }
+        )
     if len(sample.token_offsets) != n:
         failures.append({"sample": idx, "message": "token_offsets length mismatch"})
+    if len(sample.word_pos) != n:
+        failures.append({"sample": idx, "message": "word_pos length mismatch"})
+    if len(sample.morph_depth) != n:
+        failures.append({"sample": idx, "message": "morph_depth length mismatch"})
     vocab_size = bundle.tokenizer.vocab_size
     for pos, token_id in enumerate(sample.input_ids):
         if token_id < 0 or token_id >= vocab_size:
-            failures.append({"sample": idx, "token": pos, "message": f"token id {token_id} out of range"})
+            failures.append(
+                {
+                    "sample": idx,
+                    "token": pos,
+                    "message": f"token id {token_id} out of range",
+                }
+            )
     for pos, label in enumerate(sample.labels):
         if label == IGNORE_INDEX:
             continue
         if label < 0 or label >= vocab_size:
-            failures.append({"sample": idx, "token": pos, "message": f"label id {label} out of range"})
+            failures.append(
+                {
+                    "sample": idx,
+                    "token": pos,
+                    "message": f"label id {label} out of range",
+                }
+            )
     for pos, offset in enumerate(sample.token_offsets):
         start, end = int(offset[0]), int(offset[1])
         if (start, end) == (-1, -1):
             continue
         if start < 0 or end < start:
-            failures.append({"sample": idx, "token": pos, "message": f"invalid offset {(start, end)}"})
+            failures.append(
+                {
+                    "sample": idx,
+                    "token": pos,
+                    "message": f"invalid offset {(start, end)}",
+                }
+            )
             continue
         if text is not None and end > len(text):
-            failures.append({"sample": idx, "token": pos, "message": f"invalid offset {(start, end)}"})
+            failures.append(
+                {
+                    "sample": idx,
+                    "token": pos,
+                    "message": f"invalid offset {(start, end)}",
+                }
+            )
+    for pos, value in enumerate(sample.word_pos):
+        if int(value) < 0:
+            failures.append(
+                {"sample": idx, "token": pos, "message": "negative word_pos"}
+            )
+    for pos, value in enumerate(sample.morph_depth):
+        if int(value) < 0:
+            failures.append(
+                {"sample": idx, "token": pos, "message": "negative morph_depth"}
+            )
     failures.extend(
         _validate_spans(
             bundle,
@@ -191,13 +259,31 @@ def _validate_spans(
     for span_idx, span in enumerate(sample.modality_spans.get(key, [])):
         start, end = int(span[0]), int(span[1])
         if start < 0 or end > len(sample.input_ids) or end <= start:
-            failures.append({"sample": sample_idx, "span": span_idx, "message": f"{key} out of bounds"})
+            failures.append(
+                {
+                    "sample": sample_idx,
+                    "span": span_idx,
+                    "message": f"{key} out of bounds",
+                }
+            )
             continue
         if end - start < 2:
-            failures.append({"sample": sample_idx, "span": span_idx, "message": f"{key} missing start/end"})
+            failures.append(
+                {
+                    "sample": sample_idx,
+                    "span": span_idx,
+                    "message": f"{key} missing start/end",
+                }
+            )
             continue
         if sample.input_ids[start] != start_id or sample.input_ids[end - 1] != end_id:
-            failures.append({"sample": sample_idx, "span": span_idx, "message": f"{key} markers mismatch"})
+            failures.append(
+                {
+                    "sample": sample_idx,
+                    "span": span_idx,
+                    "message": f"{key} markers mismatch",
+                }
+            )
         label_end = min(end, len(sample.labels))
         for token_pos in range(start, label_end):
             if sample.labels[token_pos] != IGNORE_INDEX:

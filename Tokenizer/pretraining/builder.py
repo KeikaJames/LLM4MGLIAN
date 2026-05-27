@@ -10,6 +10,8 @@ from typing import Any
 from Tokenizer.unified.bundle import TokenizerBundle
 from Tokenizer.unified.encoded import EncodedToken
 
+from .morphology import derive_morph_info_from_tokens
+
 IGNORE_INDEX = -100
 DEFAULT_LABEL_IGNORE_TOKENS = {
     "<pad>",
@@ -45,6 +47,8 @@ class EncodedSample:
     attention_mask: list[int]
     labels: list[int]
     token_offsets: list[tuple[int, int]]
+    word_pos: list[int]
+    morph_depth: list[int]
     modality_spans: dict
     metadata: dict
 
@@ -122,14 +126,21 @@ class PretrainingDataBuilder:
         modality_spans: dict,
         metadata: dict,
     ) -> EncodedSample:
+        word_pos, morph_depth = derive_morph_info_from_tokens(tokens)
         return EncodedSample(
             input_ids=list(input_ids),
             attention_mask=list(attention_mask),
             labels=self._build_labels(input_ids, tokens),
             token_offsets=[(token.start, token.end) for token in tokens],
+            word_pos=word_pos,
+            morph_depth=morph_depth,
             modality_spans={
-                "image_token_spans": [tuple(span) for span in modality_spans.get("image_token_spans", [])],
-                "video_token_spans": [tuple(span) for span in modality_spans.get("video_token_spans", [])],
+                "image_token_spans": [
+                    tuple(span) for span in modality_spans.get("image_token_spans", [])
+                ],
+                "video_token_spans": [
+                    tuple(span) for span in modality_spans.get("video_token_spans", [])
+                ],
             },
             metadata=dict(metadata),
         )
@@ -162,6 +173,8 @@ class PretrainingDataBuilder:
             attention_mask=sample.attention_mask[:cutoff],
             labels=sample.labels[:cutoff],
             token_offsets=sample.token_offsets[:cutoff],
+            word_pos=sample.word_pos[:cutoff],
+            morph_depth=sample.morph_depth[:cutoff],
             modality_spans=modality_spans,
             metadata=metadata,
         )

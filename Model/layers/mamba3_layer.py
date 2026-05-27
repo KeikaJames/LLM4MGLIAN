@@ -222,10 +222,14 @@ class Mamba3Layer(nn.Module):
         if attn_mask is not None:
             if attn_mask.shape != x.shape[:2]:
                 raise ValueError("attn_mask must have shape [B, L]")
-            if not isinstance(self.mamba, NaiveSSM) and not bool(attn_mask.all()):
+            if (
+                not isinstance(self.mamba, NaiveSSM)
+                and not bool(attn_mask.all())
+                and not _is_right_padding_mask(attn_mask)
+            ):
                 raise ValueError(
-                    "official Mamba backend does not support masked state updates; "
-                    "use fallback Mamba or pass an all-ones attention mask"
+                    "official Mamba backend only supports all-ones or right-padded "
+                    "attention masks; use fallback Mamba for left/interior padding"
                 )
             mask = attn_mask.to(device=x.device, dtype=x.dtype).unsqueeze(-1)
 
@@ -243,6 +247,17 @@ class Mamba3Layer(nn.Module):
         if mask is not None:
             out = out * mask
         return out
+
+
+def _is_right_padding_mask(attn_mask: torch.Tensor) -> bool:
+    if attn_mask.ndim != 2:
+        return False
+    mask = attn_mask.to(dtype=torch.long)
+    if mask.numel() == 0:
+        return True
+    if not bool(((mask == 0) | (mask == 1)).all()):
+        return False
+    return bool((mask[:, 1:] <= mask[:, :-1]).all())
 
 
 def _check() -> None:
