@@ -3,10 +3,13 @@
 import unittest
 
 import torch
+import torch.nn as nn
 
 from Model.config import RDTConfig
+import Model.layers.mamba3_layer as mamba3_layer
 from Model.layers.mamba3_layer import Mamba3Layer
 from Model.model import RDTForCausalLM
+from Model.vision import inject_visual_features
 
 
 def test_config() -> RDTConfig:
@@ -33,6 +36,17 @@ def test_config() -> RDTConfig:
 
 
 class ModelSmokeTest(unittest.TestCase):
+    def test_tied_heads_share_embedding_after_init(self):
+        cfg = test_config()
+        model = RDTForCausalLM(cfg)
+
+        self.assertEqual(model.lm_head.weight.data_ptr(), model.embed.weight.data_ptr())
+        self.assertIsNotNone(model.reverse_head)
+        self.assertEqual(
+            model.reverse_head.weight.data_ptr(),
+            model.embed.weight.data_ptr(),
+        )
+
     def test_forward_backward_with_image_patch(self):
         torch.manual_seed(0)
         cfg = test_config()
@@ -103,6 +117,52 @@ class ModelSmokeTest(unittest.TestCase):
         self.assertTrue(
             torch.equal(padded_out[:, :2], torch.zeros_like(padded_out[:, :2]))
         )
+
+    def test_fallback_mamba_honors_configured_state_size(self):
+        cfg = test_config()
+        cfg.mamba_d_state = 24
+
+        layer = Mamba3Layer(cfg)
+
+        self.assertEqual(layer.backend, "fallback")
+        self.assertEqual(layer.mamba.d_state, 24)
+
+    def test_official_mamba_rejects_masked_state_updates(self):
+        class FakeOfficialMamba3(nn.Module):
+            def __init__(self, **kwargs):
+                super().__init__()
+
+            def forward(self, x):
+                return x
+
+        old = mamba3_layer.OfficialMamba3
+        mamba3_layer.OfficialMamba3 = FakeOfficialMamba3
+        try:
+            cfg = test_config()
+            cfg.use_official_mamba = True
+            layer = Mamba3Layer(cfg)
+
+            x = torch.randn(1, 3, cfg.d_model)
+            layer(x, attn_mask=torch.ones(1, 3, dtype=torch.long))
+
+            with self.assertRaisesRegex(ValueError, "official Mamba backend"):
+                layer(x, attn_mask=torch.tensor([[0, 1, 1]]))
+        finally:
+            mamba3_layer.OfficialMamba3 = old
+
+    def test_unbatched_visual_features_require_single_batch(self):
+        cfg = test_config()
+        inputs = torch.zeros(2, 3, cfg.d_model)
+        input_ids = torch.tensor(
+            [
+                [cfg.bos_id, cfg.image_patch_id, cfg.eos_id],
+                [cfg.bos_id, cfg.image_patch_id, cfg.eos_id],
+            ]
+        )
+        features = torch.randn(2, cfg.d_model)
+
+        with self.assertRaisesRegex(ValueError, "batch size is 1"):
+            inject_visual_features(inputs, input_ids, features, cfg.image_patch_id)
 
     def test_config_rejects_invalid_dropout(self):
         with self.assertRaisesRegex(ValueError, "dropout"):

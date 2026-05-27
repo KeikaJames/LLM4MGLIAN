@@ -48,11 +48,6 @@ class RDTForCausalLM(nn.Module):
         else:
             self.reverse_head = None
 
-        if cfg.tie_word_embeddings:
-            self.lm_head.weight = self.embed.weight
-            if self.reverse_head is not None:
-                self.reverse_head.weight = self.embed.weight
-
         self.apply(self._init_weights)
 
         if cfg.tie_word_embeddings:
