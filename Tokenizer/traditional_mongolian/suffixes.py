@@ -2,9 +2,9 @@
 """Traditional Mongolian suffix inventory for tokenizer experiments."""
 
 try:
-    from .unicode_norm import CONTROL_CHARS, NNBSP, strip_all
+    from .unicode_norm import NNBSP, strip_all
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from unicode_norm import CONTROL_CHARS, NNBSP, strip_all  # type: ignore[no-redef]
+    from unicode_norm import NNBSP, strip_all  # type: ignore[no-redef]
 
 
 CASE_SUFFIXES = [
@@ -947,7 +947,9 @@ def validate_suffix_inventory():
     surfaces = {surface for item in ALL_SUFFIXES for surface in item["surface"]}
     missing_legacy = sorted(LEGACY_MONGOL_CODE_SUFFIX_SURFACES - surfaces)
     if missing_legacy:
-        raise ValueError(f"Missing legacy mongol_code suffix surfaces: {missing_legacy}")
+        raise ValueError(
+            f"Missing legacy mongol_code suffix surfaces: {missing_legacy}"
+        )
 
     return True
 

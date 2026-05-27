@@ -7,6 +7,7 @@ import json
 from collections import Counter
 from typing import Iterable
 
+from Tokenizer.traditional_mongolian.alphabet import MONGOLIAN_LETTERS
 from Tokenizer.traditional_mongolian.stemmer import MongolStemmer
 from Tokenizer.traditional_mongolian.unicode_norm import strip_all_with_map
 
@@ -20,11 +21,7 @@ MONGOLIAN_RANGES = [
 
 
 def contains_mongolian(text: str) -> bool:
-    return any(
-        lo <= ord(ch) <= hi
-        for ch in text
-        for lo, hi in MONGOLIAN_RANGES
-    )
+    return any(lo <= ord(ch) <= hi for ch in text for lo, hi in MONGOLIAN_RANGES)
 
 
 class MorphBPETrainer:
@@ -34,15 +31,20 @@ class MorphBPETrainer:
         vocab_size: int = 4096,
         min_pair_freq: int = 2,
         min_boundary_confidence: float = 0.60,
+        seed_alphabet: bool = True,
     ):
         self.stemmer = stemmer or MongolStemmer()
         self.vocab_size = vocab_size
         self.min_pair_freq = min_pair_freq
         self.min_boundary_confidence = min_boundary_confidence
+        self.seed_alphabet = seed_alphabet
 
     def train(self, texts: Iterable[str]) -> MorphBPETokenizer:
         words = self._initial_words(texts)
         vocab = {"<unk>": 0}
+        if self.seed_alphabet:
+            for ch in MONGOLIAN_LETTERS:
+                vocab.setdefault(ch, len(vocab))
         for pieces, _forbidden in words:
             for piece in pieces:
                 vocab.setdefault(piece.text, len(vocab))
@@ -75,6 +77,7 @@ class MorphBPETrainer:
             merges=merges,
             stemmer=self.stemmer,
             min_boundary_confidence=self.min_boundary_confidence,
+            seed_alphabet=self.seed_alphabet,
         )
 
     def save(self, tokenizer: MorphBPETokenizer, path: str) -> None:
@@ -151,6 +154,7 @@ def save_training_json(tokenizer: MorphBPETokenizer, path: str) -> None:
                     "min_boundary_confidence": getattr(
                         tokenizer, "min_boundary_confidence", 0.60
                     ),
+                    "seed_alphabet": getattr(tokenizer, "seed_alphabet", False),
                 },
             },
             f,

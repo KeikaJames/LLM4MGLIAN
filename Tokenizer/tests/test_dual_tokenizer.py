@@ -99,9 +99,21 @@ class DualTokenizerTest(unittest.TestCase):
             ],
         )
 
+    def test_segments_mongolian_punctuation_as_misc(self):
+        spans = segment_by_language("ᠰᠠᠢᠨ᠃")
+        self.assertEqual(
+            [(span.lang, span.text) for span in spans],
+            [
+                ("mn", "ᠰᠠᠢᠨ"),
+                ("misc", "᠃"),
+            ],
+        )
+
     def test_encode_routes_tracks_to_global_id_ranges(self):
         tokenizer = build_fake_tokenizer()
-        result = tokenizer.encode_with_spans("ᠮᠣᠩᠭᠣᠯ 这 test!", add_bos=True, add_eos=True)
+        result = tokenizer.encode_with_spans(
+            "ᠮᠣᠩᠭᠣᠯ 这 test!", add_bos=True, add_eos=True
+        )
         self.assertEqual(result.ids[0], SPECIAL_TOKENS["<bos>"])
         self.assertEqual(result.ids[-1], SPECIAL_TOKENS["<eos>"])
         self.assertIn(SEGMENT["mongolian"][0], result.ids)
@@ -170,7 +182,15 @@ class DualTokenizerTest(unittest.TestCase):
         self.assertIn(("zh", 0, 1), by_track)
         self.assertIn(("space", 1, 2), by_track)
         self.assertIn(("en", 2, 6), by_track)
-        self.assertTrue(any(tok.track == "misc" and tok.start == 7 for tok in result.tokens))
+        self.assertTrue(
+            any(tok.track == "misc" and tok.start == 7 for tok in result.tokens)
+        )
+
+    def test_mongolian_punctuation_round_trips_without_unk(self):
+        tokenizer = build_fake_tokenizer()
+        ids = tokenizer.encode("᠃")
+        self.assertEqual(ids, [tokenizer.vocab["᠃"]])
+        self.assertEqual(tokenizer.decode(ids), "᠃")
 
 
 if __name__ == "__main__":

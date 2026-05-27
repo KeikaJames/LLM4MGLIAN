@@ -19,17 +19,21 @@ class MorphBPETokenizer:
         merges: dict[tuple[str, str], tuple[str, int]] | None = None,
         stemmer: MongolStemmer | None = None,
         min_boundary_confidence: float = 0.60,
+        seed_alphabet: bool = False,
     ):
         self.vocab = vocab or {"<unk>": 0}
         self.merges = merges or {}
         self.stemmer = stemmer
         self.min_boundary_confidence = min_boundary_confidence
+        self.seed_alphabet = seed_alphabet
         self._id_to_token = {i: tok for tok, i in self.vocab.items()}
 
     # ---- io ----
 
     @classmethod
-    def from_file(cls, path: str, stemmer: MongolStemmer | None = None) -> "MorphBPETokenizer":
+    def from_file(
+        cls, path: str, stemmer: MongolStemmer | None = None
+    ) -> "MorphBPETokenizer":
         payload = serialization.load(path)
         merges = serialization.merges_from_payload(payload)
         return cls(
@@ -39,6 +43,7 @@ class MorphBPETokenizer:
             min_boundary_confidence=float(
                 payload.get("config", {}).get("min_boundary_confidence", 0.60)
             ),
+            seed_alphabet=bool(payload.get("config", {}).get("seed_alphabet", False)),
         )
 
     def save(self, path: str, extra_config: dict[str, Any] | None = None) -> None:
@@ -63,10 +68,7 @@ class MorphBPETokenizer:
 
         analysis = self.stemmer.analyze(word) if self.stemmer else None
         forbidden: set[int] = set()
-        if (
-            analysis is not None
-            and analysis.confidence >= self.min_boundary_confidence
-        ):
+        if analysis is not None and analysis.confidence >= self.min_boundary_confidence:
             forbidden = set(analysis.skeleton_boundaries[1:-1])
 
         pieces = [

@@ -8,7 +8,6 @@ This module shells out to `cargo run --example normalize` inside the
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,8 +29,7 @@ def normalize(text: str, nominal: bool = False) -> str:
     crate = _find_crate()
     if not _has_cargo():
         raise RuntimeError(
-            "cargo not found in PATH; install Rust or use a PyO3 build "
-            "when available."
+            "cargo not found in PATH; install Rust or use a PyO3 build when available."
         )
     args = ["cargo", "run", "--quiet", "--example", "normalize"]
     if nominal:
@@ -79,9 +77,7 @@ def main() -> None:
     args = parser.parse_args()
 
     text = (
-        Path(args.input).read_text(encoding="utf-8")
-        if args.input
-        else sys.stdin.read()
+        Path(args.input).read_text(encoding="utf-8") if args.input else sys.stdin.read()
     )
     out = normalize(text, nominal=args.nominal)
     if args.output:

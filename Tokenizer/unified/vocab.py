@@ -39,7 +39,8 @@ def make_byte_tokens() -> list[str]:
 
 def build_misc_tokens() -> list[str]:
     punct = list("0123456789.,!?;:()[]{}\"'-—…。，！？；：（）《》“”‘’、·")
-    return list(dict.fromkeys(punct + make_byte_tokens()))
+    mongolian_punct = list("᠀᠁᠂᠃᠄᠅᠆᠇᠈᠉")
+    return list(dict.fromkeys(punct + mongolian_punct + make_byte_tokens()))
 
 
 def build_unified_vocab(

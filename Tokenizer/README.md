@@ -81,10 +81,33 @@ python3 -m Tokenizer.evals.offset_check --json
 python3 -m Tokenizer.evals.chars_per_token --json
 python3 -m Tokenizer.evals.mongolian_boundary_recall --json
 python3 -m Tokenizer.evals.compare_baselines --json
+python3 -m Tokenizer.evals.tokenizer_hit_rate \
+  --train-input Tokenizer/data/sample_text.jsonl \
+  --input Tokenizer/data/menksoft_mt_phrases.jsonl \
+  --json
 ```
 
 All evals support `--input <path.jsonl|.txt>` and fall back to built-in smoke
 samples when no input is provided.
+
+`tokenizer_hit_rate` reports `<unk>` rate, token hit rate, byte fallback rate,
+per-track character density, Mongolian word hit rate, and morpheme-boundary
+respect. It can load a persisted `TokenizerBundle` or train a small experimental
+MorphBPE tokenizer from `--train-input`.
+
+## Collect Menksoft MT Phrase Samples
+
+```bash
+python3 -m Tokenizer.tools.menksoft_collect_phrases \
+  --output Tokenizer/data/menksoft_mt_phrases.jsonl \
+  --limit 80 \
+  --batch-size 20
+```
+
+The collector calls Menksoft's public machine-translation endpoint and writes
+silver-quality short phrases for tokenizer coverage experiments. Use
+`--insecure` only in local environments whose Python TLS certificate store
+cannot validate the site certificate.
 
 ## Normalize Mongolian via Rust bridge
 

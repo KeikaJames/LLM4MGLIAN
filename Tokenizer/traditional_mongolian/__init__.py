@@ -1,3 +1,4 @@
+from .alphabet import MONGOLIAN_LETTERS, MONGOLIAN_RANGES, is_mongolian_codepoint
 from .suffixes import (
     ALL_SUFFIXES,
     ALL_SUFFIXES_BY_ORDER,
@@ -33,12 +34,15 @@ __all__ = [
     "FVS3",
     "FVS4",
     "LEGACY_MONGOL_CODE_SUFFIX_SURFACES",
+    "MONGOLIAN_LETTERS",
+    "MONGOLIAN_RANGES",
     "MVS",
     "NIRUGU",
     "NNBSP",
     "allows_nnbsp",
     "duplicate_surfaces",
     "iter_surfaces",
+    "is_mongolian_codepoint",
     "strip_all",
     "strip_all_with_map",
     "strip_controls",
