@@ -69,7 +69,8 @@ python3 -m Tokenizer.evals.pretraining_gate \
   --json
 ```
 
-The pretraining builder masks structural labels with `-100`, keeps
+The pretraining builder masks structural labels with `-100`, writes
+`word_pos` / `morph_depth` for the model's morphological RoPE, keeps
 image/video spans aligned, and can pack text-only rows while leaving
 multimodal rows standalone.
 

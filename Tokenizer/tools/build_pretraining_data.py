@@ -18,7 +18,9 @@ from Tokenizer.pretraining import (
 from Tokenizer.unified.bundle import TokenizerBundle
 
 
-def _iter_samples(path: str, builder: PretrainingDataBuilder) -> Iterable[EncodedSample]:
+def _iter_samples(
+    path: str, builder: PretrainingDataBuilder
+) -> Iterable[EncodedSample]:
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.rstrip("\n")
@@ -36,10 +38,14 @@ def _summary(samples: Iterable[dict], unk_id: int, skipped_empty: int) -> dict:
     total_tokens = sum(lengths)
     unk_count = sum(row["input_ids"].count(unk_id) for row in rows)
     supervised_tokens = sum(
-        1
-        for row in rows
-        for label in row["labels"]
-        if int(label) != IGNORE_INDEX
+        1 for row in rows for label in row["labels"] if int(label) != IGNORE_INDEX
+    )
+    max_morph_depth = max(
+        (
+            max((int(value) for value in row.get("morph_depth", [])), default=0)
+            for row in rows
+        ),
+        default=0,
     )
     return {
         "num_samples": len(rows),
@@ -49,6 +55,7 @@ def _summary(samples: Iterable[dict], unk_id: int, skipped_empty: int) -> dict:
         "unk_rate": (unk_count / total_tokens) if total_tokens else 0.0,
         "supervised_tokens": supervised_tokens,
         "supervised_rate": (supervised_tokens / total_tokens) if total_tokens else 0.0,
+        "max_morph_depth": max_morph_depth,
     }
 
 
@@ -94,7 +101,11 @@ def main() -> None:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    print(json.dumps(_summary(rows, bundle.tokenizer.unk_id, skipped_empty), ensure_ascii=False))
+    print(
+        json.dumps(
+            _summary(rows, bundle.tokenizer.unk_id, skipped_empty), ensure_ascii=False
+        )
+    )
 
 
 if __name__ == "__main__":

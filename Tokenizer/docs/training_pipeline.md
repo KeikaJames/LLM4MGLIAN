@@ -65,11 +65,12 @@ enc = proc("describe <image>", images=[img], image_sizes=[(448, 448)])
 ## 6. Build pretraining JSONL
 
 `Tokenizer.pretraining.PretrainingDataBuilder` writes causal-LM style
-`input_ids` / `attention_mask` / `labels` rows. Labels equal input ids for
-learnable text tokens, but structural tokens are masked with `IGNORE_INDEX`
-(`-100`): `<pad>`, `<bos>`, multimodal placeholders, image/video/audio patch
-tokens, OCR/layout tags, and `<unk>`. `<eos>` remains supervised so sequence
-endings can be learned.
+`input_ids` / `attention_mask` / `labels` rows, plus `word_pos` and
+`morph_depth` for `Model.layers.rope.MorphologicalRoPE`. Labels equal input
+ids for learnable text tokens, but structural tokens are masked with
+`IGNORE_INDEX` (`-100`): `<pad>`, `<bos>`, multimodal placeholders,
+image/video/audio patch tokens, OCR/layout tags, and `<unk>`. `<eos>` remains
+supervised so sequence endings can be learned.
 
 ```bash
 python -m Tokenizer.tools.build_pretraining_data \
@@ -84,13 +85,21 @@ python -m Tokenizer.tools.build_pretraining_data \
 
 Packing only combines text-only rows. Multimodal rows stay as standalone
 samples, and truncation never leaves a partial image/video token span. If a
-span cannot fit, the whole span is removed; empty samples are skipped.
+span cannot fit, the whole span is removed; empty samples are skipped. Packed
+rows shift `word_pos` between samples so recurrent attention does not see two
+independent examples at the same morphological position.
+
+`Model.training.PretrainingCollator` can read these rows in a PyTorch
+`DataLoader` and right-pad `input_ids`, `attention_mask`, `labels`, `word_pos`,
+and `morph_depth`. For lower training memory, call the model with
+`return_logits=False` and set `loss_chunk_size` either in `RDTConfig` or the
+forward call.
 
 ## 7. Gate pretraining data
 
 Run the gate before launching a real training job. It validates ids, labels,
-offsets, multimodal span markers, loss masks inside image/video spans, unknown
-rate, and supervised-token rate.
+offsets, `word_pos` / `morph_depth`, multimodal span markers, loss masks inside
+image/video spans, unknown rate, and supervised-token rate.
 
 ```bash
 python -m Tokenizer.evals.pretraining_gate \
