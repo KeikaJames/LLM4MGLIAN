@@ -126,8 +126,8 @@ class PretrainingDataBuilder:
                 image_sizes=list(obj.get("image_sizes") or []),
                 videos=list(obj.get("videos") or []),
                 video_sizes=list(obj.get("video_sizes") or []),
-                ocr_labels=_nested_int_lists(obj.get("ocr_labels")),
-                reading_order=_nested_int_lists(obj.get("reading_order")),
+                ocr_labels=nested_int_lists(obj.get("ocr_labels")),
+                reading_order=nested_int_lists(obj.get("reading_order")),
             )
             return self._truncate(sample)
         return self.encode_text(text, metadata=self._metadata(obj))
@@ -171,8 +171,8 @@ class PretrainingDataBuilder:
             image_sizes=list(image_sizes or []),
             videos=list(videos or []),
             video_sizes=list(video_sizes or []),
-            ocr_labels=_nested_int_lists(ocr_labels),
-            reading_order=_nested_int_lists(reading_order),
+            ocr_labels=nested_int_lists(ocr_labels),
+            reading_order=nested_int_lists(reading_order),
         )
 
     def _build_labels(
@@ -240,7 +240,7 @@ def encoded_sample_to_dict(sample: EncodedSample) -> dict[str, Any]:
     return asdict(sample)
 
 
-def _nested_int_lists(value: Any) -> list[list[int]]:
+def nested_int_lists(value: Any) -> list[list[int]]:
     if not value:
         return []
     if not isinstance(value, (list, tuple)):

@@ -5,6 +5,7 @@ from .builder import (
     EncodedSample,
     PretrainingDataBuilder,
     encoded_sample_to_dict,
+    nested_int_lists,
 )
 from .morphology import (
     derive_morph_info_from_boundary_ids,
@@ -21,5 +22,6 @@ __all__ = [
     "derive_morph_info_from_offsets",
     "derive_morph_info_from_tokens",
     "encoded_sample_to_dict",
+    "nested_int_lists",
     "pack_samples",
 ]

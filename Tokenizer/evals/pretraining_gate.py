@@ -13,6 +13,7 @@ from Tokenizer.pretraining import (
     EncodedSample,
     PretrainingDataBuilder,
     derive_morph_info_from_offsets,
+    nested_int_lists,
 )
 from Tokenizer.unified.bundle import TokenizerBundle
 
@@ -144,8 +145,8 @@ def _sample_from_encoded_row(obj: dict[str, Any]) -> EncodedSample:
         image_sizes=list(obj.get("image_sizes") or []),
         videos=list(obj.get("videos") or []),
         video_sizes=list(obj.get("video_sizes") or []),
-        ocr_labels=_nested_int_lists(obj.get("ocr_labels")),
-        reading_order=_nested_int_lists(obj.get("reading_order")),
+        ocr_labels=nested_int_lists(obj.get("ocr_labels")),
+        reading_order=nested_int_lists(obj.get("reading_order")),
     )
 
 
@@ -340,25 +341,6 @@ def _validate_spans(
                     }
                 )
     return failures
-
-
-def _nested_int_lists(value: Any) -> list[list[int]]:
-    if not value:
-        return []
-    if not isinstance(value, (list, tuple)):
-        raise ValueError("expected a list of int lists")
-    head = value[0] if value else None
-    if isinstance(head, int):
-        return [[int(item) for item in value]]
-    out: list[list[int]] = []
-    for item in value:
-        if item is None:
-            out.append([])
-            continue
-        if not isinstance(item, (list, tuple)):
-            raise ValueError("expected a list of int lists")
-        out.append([int(x) for x in item])
-    return out
 
 
 def main() -> None:

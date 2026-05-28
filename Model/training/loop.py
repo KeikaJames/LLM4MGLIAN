@@ -204,6 +204,16 @@ def evaluate(
 ) -> dict[str, float]:
     model.eval()
     device_type = device.type if device.type in ("cuda", "cpu") else "cpu"
+    # The model reduces its loss using its *own* ``ignore_index`` (RDTConfig),
+    # which may be overridden away from the module-level default. Read it from
+    # the unwrapped module so the eval denominator counts exactly the positions
+    # the model treated as targets (DDP/FSDP expose the real module via
+    # ``.module``).
+    core = model
+    while hasattr(core, "module"):
+        core = core.module
+    ignore_index = getattr(getattr(core, "cfg", None), "ignore_index", IGNORE_INDEX)
+
     total_loss = 0.0
     total_targets = 0
     seen = 0
@@ -225,16 +235,22 @@ def evaluate(
                 pixel_values=batch.get("pixel_values"),
                 return_logits=not cfg.use_loss_chunking,
             )
-        # The model's loss is a mean over valid (non-ignore-index) next-token
-        # targets — labels are shifted internally (logits[:, :-1] vs
-        # labels[:, 1:]), and image/pad positions are set to ignore_index.
-        # Weight by that same count so the cross-batch average is exact rather
-        # than biased by padded/masked positions (attention_mask overcounts).
+        # Report the **forward (causal) LM loss** — the perplexity-relevant
+        # term — weighted by its own valid next-token count. Labels are shifted
+        # internally (logits[:, :-1] vs labels[:, 1:]); image/pad positions are
+        # ignore_index. Using the forward part keeps the cross-batch average
+        # exact regardless of the reverse/ponder terms a bidirectional training
+        # objective folds into ``out["loss"]`` (those use a different shift and
+        # token count, which would bias a combined-loss weighting).
         labels = batch["labels"]
-        n_targets = int((labels[:, 1:] != IGNORE_INDEX).sum().item())
+        n_targets = int((labels[:, 1:] != ignore_index).sum().item())
         if n_targets == 0:
             continue
-        total_loss += float(out["loss"].item()) * n_targets
+        loss_parts = out.get("loss_parts") or {}
+        batch_loss = loss_parts.get("forward")
+        if batch_loss is None:
+            batch_loss = float(out["loss"].item())
+        total_loss += float(batch_loss) * n_targets
         total_targets += n_targets
     avg = total_loss / max(1, total_targets)
     return {"eval_loss": avg, "eval_tokens": float(total_targets)}
