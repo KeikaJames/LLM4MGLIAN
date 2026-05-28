@@ -18,12 +18,10 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import replace
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Iterator
 
 import torch
-import torch.nn.functional as F
 
 from Model.config import OMVTConfig
 from Model.omvt import (
@@ -76,6 +74,26 @@ def _omvt_cfg(args) -> OMVTConfig:
     return cfg
 
 
+def _first_seq(value: object) -> list[int] | None:
+    """Normalize a schema-correct ``list[list[int]]`` field to a 1-D row.
+
+    The multimodal JSONL schema stores ``ocr_labels`` / ``reading_order``
+    as one sequence per image (``[[id, id, ...], ...]``). The SSL trainer
+    operates on one image per row, so we pick the first image's sequence
+    and return ``None`` when it is missing or empty.
+    """
+
+    if not value:
+        return None
+    head = value[0] if isinstance(value, (list, tuple)) else None
+    if isinstance(head, (list, tuple)):
+        return [int(x) for x in head] or None
+    if isinstance(head, int):
+        # Legacy or hand-built rows that already store a flat list.
+        return [int(x) for x in value]  # type: ignore[arg-type]
+    return None
+
+
 def _iter_real_jsonl(
     path: str,
     batch_size: int,
@@ -107,8 +125,8 @@ def _iter_real_jsonl(
                     continue
                 imgs = [row["images"][0] for row in buf]
                 stacked = image_processor(imgs)
-                ocr = [row.get("ocr_labels") for row in buf]
-                ro = [row.get("reading_order") for row in buf]
+                ocr = [_first_seq(row.get("ocr_labels")) for row in buf]
+                ro = [_first_seq(row.get("reading_order")) for row in buf]
                 yield {
                     "images": stacked,
                     "ocr_labels": ocr,

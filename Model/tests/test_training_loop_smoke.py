@@ -2,7 +2,6 @@
 
 """Smoke test: one-step training + checkpoint save/load/resume."""
 
-import json
 import tempfile
 import unittest
 from pathlib import Path

@@ -199,27 +199,31 @@ class PretrainingCollator:
     def _build_pixel_batch(self, normalized: list[dict[str, Any]]) -> Any:
         if self.image_processor is None or self.omvt_cfg is None:
             return None
-        # Per-row image lists (possibly empty). Real-world batches almost
-        # always carry exactly one image per row; we support 0/N as a
-        # convenience but emit a single stacked tensor per kind, with one
-        # image-row mapped to one OMVT entry. Mixed empty/non-empty
-        # batches are split-mode unfriendly, so we hard-fail there.
+        # Current OMVT injector assumes exactly **one image per row**: it
+        # treats the leading axis of every pixel tensor as the text-batch
+        # axis and replaces ``<image_patch>`` slots from a contiguous
+        # ``[B, compress_to, D]`` feature block. Multi-image-per-row would
+        # require either reshaping features back to ``[B, N*compress_to,
+        # D]`` *and* a matching N*compress_to <image_patch> count, or a
+        # bucketed dataloader. Neither is wired yet — we reject the batch
+        # explicitly rather than producing a silently-misaligned forward.
         per_row_images = [list(row.get("images") or []) for row in normalized]
         n_images_per_row = {len(items) for items in per_row_images}
         if n_images_per_row == {0}:
             return None
-        if len(n_images_per_row) != 1:
+        if n_images_per_row != {1}:
             raise ValueError(
-                "all rows in a multimodal batch must carry the same number of images "
-                f"(got {sorted(n_images_per_row)}); use bucketed dataloaders for mixed sets"
+                "PretrainingCollator currently supports exactly one image per row "
+                f"(got {sorted(n_images_per_row)}). Split mixed-cardinality data via "
+                "bucketed dataloaders, or extend _build_pixel_batch + VisionInjector "
+                "to handle N>1 images per row."
             )
-        flat = [spec for row_items in per_row_images for spec in row_items]
+        flat = [row_items[0] for row_items in per_row_images]
         images = self.image_processor(flat)
-        # images: [B*N, C, H, W]. The OMVT injector treats the leading
-        # axis as one image per ``<image_patch>`` slot, so we keep it
-        # flat and let ``collate_omvt_batch`` build the patch streams.
-        # Importing lazily to avoid a hard dep cycle from Tokenizer →
-        # Model when the multimodal path is unused.
+        # images: [B, C, H, W]. OMVT will turn each row into compress_to
+        # visual tokens and the injector replaces the row's
+        # <image_patch> slots one-for-one. Lazy import keeps the
+        # Tokenizer → Model edge cold for text-only setups.
         from Model.omvt.patcher import collate_omvt_batch
 
         return dict(collate_omvt_batch(images, self.omvt_cfg))

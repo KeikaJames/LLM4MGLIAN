@@ -140,6 +140,12 @@ def _sample_from_encoded_row(obj: dict[str, Any]) -> EncodedSample:
             ],
         },
         metadata=dict(obj.get("metadata") or {}),
+        images=list(obj.get("images") or []),
+        image_sizes=list(obj.get("image_sizes") or []),
+        videos=list(obj.get("videos") or []),
+        video_sizes=list(obj.get("video_sizes") or []),
+        ocr_labels=[list(item) for item in (obj.get("ocr_labels") or [])],
+        reading_order=[list(item) for item in (obj.get("reading_order") or [])],
     )
 
 

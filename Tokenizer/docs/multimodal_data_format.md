@@ -29,7 +29,9 @@
 | `reading_order` | `list[list[int]]` | 每张图的 patch 阅读序 (长度 ≤ `compress_to`)；不足部分自动 `arange` 补齐 |
 
 ### 同批一致性约束
-`PretrainingCollator._build_pixel_batch` 要求**同一 micro-batch 内每行的图片数量一致**（典型用法：每行 1 张图）。混合 0/1 图的 batch 必须通过 bucketed dataloader 拆分；强行混批会抛出明确错误。
+`PretrainingCollator._build_pixel_batch` **当前实现严格要求每行恰好 1 张图**——这是 `VisionInjector` 的约束：它把 OMVT 的 `[B, compress_to, D]` 特征按行一一替换 `<image_patch>` 槽位。混批 0/1 图或多图都会立刻抛 `ValueError`，错误信息会指出如何分桶。
+
+未来扩展到 N>1 / row 需要同时改 collator（reshape 到 `[B, N*compress_to, D]`）+ VisionInjector（按行段切片注入）+ 文本侧（`<image>` 展开到 `N*compress_to` 个槽位）。当前不在路线图上；多图数据请通过 bucketed dataloader 把每条记录拆成多个单图行。
 
 ## 三个训练入口的开关
 

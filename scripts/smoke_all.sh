@@ -25,7 +25,11 @@ python3 -m scripts.train_omvt_ssl --smoke --steps 3 --output "$OUT/omvt_ssl"
 
 echo "==> [5/5] OMVT → RDT end-to-end already covered by VLM align step above."
 
-echo "==> [6/6] multimodal end-to-end (PIL images → JSONL → trainers)"
-OUT="$OUT/mm" bash "$ROOT/scripts/smoke_multimodal.sh"
+if python3 -c "import PIL" >/dev/null 2>&1; then
+    echo "==> [6/6] multimodal end-to-end (PIL images → JSONL → trainers)"
+    OUT="$OUT/mm" bash "$ROOT/scripts/smoke_multimodal.sh"
+else
+    echo "==> [6/6] multimodal smoke skipped (Pillow not installed; pip install -e .[image])"
+fi
 
 echo "All smoke runs OK."

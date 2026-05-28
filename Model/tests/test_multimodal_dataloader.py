@@ -9,7 +9,6 @@ model, and produces a finite loss after one optimizer step.
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import unittest
@@ -116,6 +115,70 @@ class MultimodalDataloaderTest(unittest.TestCase):
         }
         batch = coll([row, row])
         self.assertNotIn("pixel_values", batch)
+
+    def test_multi_image_per_row_is_rejected(self) -> None:
+        # Current OMVT injector only supports 1 image per row; the
+        # collator must refuse N!=1 explicitly so the failure mode is a
+        # clear ValueError rather than a silent OMVT/B*N mismatch.
+        from Model.config import OMVTConfig
+
+        omvt_cfg = OMVTConfig(
+            image_size=16,
+            d_vision=32,
+            vertical_patch=(8, 4),
+            horizontal_patch=(4, 8),
+            square_patch=(4, 4),
+            layout_patch=(16, 16),
+            compress_to=4,
+        )
+        coll = PretrainingCollator(
+            image_processor=PILImageProcessor(image_size=16) if Image else None,
+            omvt_cfg=omvt_cfg,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            img = os.path.join(tmp, "x.png")
+            Image.new("RGB", (16, 16)).save(img)
+            row = {
+                "input_ids": [BOS_ID, IMAGE_PATCH_ID, EOS_ID],
+                "attention_mask": [1, 1, 1],
+                "labels": [BOS_ID, IMAGE_PATCH_ID, EOS_ID],
+                "images": [img, img],  # 2 images on this row → rejected
+            }
+            with self.assertRaisesRegex(ValueError, "one image per row"):
+                coll([row, row])
+
+    def test_mixed_image_counts_in_batch_is_rejected(self) -> None:
+        from Model.config import OMVTConfig
+
+        omvt_cfg = OMVTConfig(
+            image_size=16,
+            d_vision=32,
+            vertical_patch=(8, 4),
+            horizontal_patch=(4, 8),
+            square_patch=(4, 4),
+            layout_patch=(16, 16),
+            compress_to=4,
+        )
+        coll = PretrainingCollator(
+            image_processor=PILImageProcessor(image_size=16) if Image else None,
+            omvt_cfg=omvt_cfg,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            img = os.path.join(tmp, "x.png")
+            Image.new("RGB", (16, 16)).save(img)
+            with_img = {
+                "input_ids": [BOS_ID, IMAGE_PATCH_ID, EOS_ID],
+                "attention_mask": [1, 1, 1],
+                "labels": [BOS_ID, IMAGE_PATCH_ID, EOS_ID],
+                "images": [img],
+            }
+            without = {
+                "input_ids": [BOS_ID, 5, EOS_ID],
+                "attention_mask": [1, 1, 1],
+                "labels": [BOS_ID, 5, EOS_ID],
+            }
+            with self.assertRaisesRegex(ValueError, "one image per row"):
+                coll([with_img, without])
 
 
 if __name__ == "__main__":  # pragma: no cover

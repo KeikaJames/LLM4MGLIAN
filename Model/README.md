@@ -156,6 +156,11 @@ Row schema is documented in
 slots in the text stream. `OMVTConfig.compress_to` **must** equal this
 count, otherwise `inject_visual_features` will refuse the batch.
 
+The current pixel-aware collator also **requires exactly one image per
+row**; mixed-cardinality or multi-image batches are rejected explicitly
+with a `ValueError`. Use bucketed dataloaders to split multi-image rows
+into singletons.
+
 | Image size | Patches per image |
 |------------|-------------------|
 | 56 × 56    | 4                 |

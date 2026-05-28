@@ -3,9 +3,10 @@
 """Image IO for the multimodal pretraining path.
 
 Loads file paths / bytes / PIL images into ``[C, H, W]`` float tensors
-that the OMVT multi-scale patcher can consume. PIL is mandatory; if
-``torchvision`` is available we use its ``functional`` ops for
-normalize/resize, otherwise we fall back to ``PIL`` + numpy.
+that the OMVT multi-scale patcher can consume. The implementation is
+**pure PIL + ``torch.frombuffer``** — no torchvision and no NumPy
+dependency — so installing the ``[image]`` extra (just ``Pillow``) is
+enough to enable the multimodal training path.
 
 Designed to plug into ``MultimodalProcessor(image_processor=...)`` and
 ``PretrainingCollator(image_processor=...)`` — both call us with a list
@@ -45,25 +46,40 @@ def _require_pil() -> None:
 
 
 def _open_to_rgb(spec: Any, *, channels: int = 3) -> "Image.Image":
+    """Materialise ``spec`` into a loaded RGB/L ``PIL.Image``.
+
+    We wrap every disk/bytes opener in a context manager and call
+    ``raw.load()`` before returning, so the underlying file descriptor
+    closes deterministically. Without this the OS fd table can fill up
+    when streaming tens of thousands of images per epoch.
+    """
+
     _require_pil()
+    mode = "L" if channels == 1 else "RGB"
     if Image is not None and isinstance(spec, Image.Image):
-        img = spec
-    elif isinstance(spec, (bytes, bytearray, memoryview)):
-        img = Image.open(io.BytesIO(bytes(spec)))
-    elif isinstance(spec, (str, os.PathLike)):
-        img = Image.open(spec)
-    elif isinstance(spec, dict) and "bytes" in spec:
-        img = Image.open(io.BytesIO(bytes(spec["bytes"])))
-    elif isinstance(spec, dict) and "path" in spec:
-        img = Image.open(spec["path"])
-    else:
-        raise TypeError(
-            f"unsupported image spec type {type(spec).__name__}; "
-            "expected path / bytes / PIL.Image / dict with 'path' or 'bytes'."
-        )
-    if channels == 1:
-        return img.convert("L")
-    return img.convert("RGB")
+        # Already an in-memory PIL image — convert eagerly so the caller
+        # can drop the original reference.
+        return spec.convert(mode)
+    if isinstance(spec, (bytes, bytearray, memoryview)):
+        with Image.open(io.BytesIO(bytes(spec))) as raw:
+            raw.load()
+            return raw.convert(mode)
+    if isinstance(spec, (str, os.PathLike)):
+        with Image.open(spec) as raw:
+            raw.load()
+            return raw.convert(mode)
+    if isinstance(spec, dict) and "bytes" in spec:
+        with Image.open(io.BytesIO(bytes(spec["bytes"]))) as raw:
+            raw.load()
+            return raw.convert(mode)
+    if isinstance(spec, dict) and "path" in spec:
+        with Image.open(spec["path"]) as raw:
+            raw.load()
+            return raw.convert(mode)
+    raise TypeError(
+        f"unsupported image spec type {type(spec).__name__}; "
+        "expected path / bytes / PIL.Image / dict with 'path' or 'bytes'."
+    )
 
 
 class PILImageProcessor:
