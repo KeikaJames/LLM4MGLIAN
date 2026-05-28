@@ -11,6 +11,7 @@ projector/tower.
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from pathlib import Path
 
@@ -62,7 +63,8 @@ def _make_text_batch(args, vocab_floor=300, vocab_ceil=320):
     rng = torch.Generator().manual_seed(args.seed)
     # layout: [BOS] <image_patch>*N <random text...> [EOS]
     text_len = L - N - 2
-    assert text_len > 0, "seq_len must be greater than 2 + n_image_tokens"
+    if text_len <= 0:
+        raise ValueError("seq_len must be greater than 2 + n_image_tokens")
     text_ids = torch.randint(vocab_floor, vocab_ceil, (B, text_len), generator=rng)
     input_ids = torch.full((B, L), 0, dtype=torch.long)
     input_ids[:, 0] = BOS_ID
@@ -76,6 +78,23 @@ def _make_text_batch(args, vocab_floor=300, vocab_ceil=320):
 
 def main(argv=None):
     args = parse_args(argv)
+    # Fast-fail validation **before** any device alloc / model construction.
+    # Mirrors the train_rdt CLI pattern: misconfigured runs should not pay
+    # the cost of building the model only to crash inside the first step.
+    if args.seq_len <= args.n_image_tokens + 2:
+        print(
+            "scripts/train_vlm_align: --seq-len must be > --n-image-tokens + 2 "
+            f"(got seq_len={args.seq_len}, n_image_tokens={args.n_image_tokens})",
+            file=sys.stderr,
+        )
+        return 2
+    if args.image_size <= 0 or args.image_size % 4 != 0:
+        print(
+            "scripts/train_vlm_align: --image-size must be a positive multiple of 4",
+            file=sys.stderr,
+        )
+        return 2
+
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
