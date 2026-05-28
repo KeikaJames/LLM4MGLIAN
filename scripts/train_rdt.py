@@ -206,9 +206,17 @@ def main(argv: list[str] | None = None) -> int:
     if train_cfg.resume:
         state.step = resume_state(train_cfg.resume, model, optimizer, scheduler)
 
-    if args.smoke or not train_cfg.train_data:
+    if args.smoke:
         batch_iter = _smoke_batches(model_cfg, train_cfg)
     else:
+        if not train_cfg.train_data:
+            # Hard fail: silently feeding random tokens into a real training
+            # run would happily emit checkpoints with no signal. Force the
+            # caller to either pass real shards or opt into ``--smoke``.
+            raise SystemExit(
+                "scripts/train_rdt: --data is required for non-smoke runs; "
+                "pass --smoke to run on synthetic tokens explicitly."
+            )
         dataloader = build_dataloader(
             train_cfg.train_data,
             train_cfg,
@@ -233,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                 device=device,
                 target_recurrent_steps=model_cfg.recurrent_steps,
             )
-            tokens_window += int(metrics["tokens"]) * train_cfg.grad_accum_steps
+            tokens_window += int(metrics["tokens"])
 
             if state.step % train_cfg.log_every == 0 or args.smoke:
                 dt = max(1e-6, time.time() - t0)
