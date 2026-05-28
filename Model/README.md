@@ -27,12 +27,13 @@ Model/
     injector.py        # OMVTInjector: tower + projector + <image_patch> replacement
     heads.py / losses.py  # OCR / masked-patch / orientation / layout-order SSL
   training/
-    data.py            # JSONL + StreamingJsonlDataset + collator + dataloader
+  data.py            # JSONL + StreamingJsonlDataset + pixel-aware collator + dataloader
     optim.py           # AdamW (no-decay groups) + warmup/cosine
     dist.py            # init_distributed + wrap_ddp + wrap_fsdp
     checkpoint.py      # FSDP-aware save / resume
     loop.py            # train_one_step + evaluate (autocast + grad accum + clip)
     logging.py         # RankZeroLogger (+ optional tensorboard)
+  multimodal_cli.py  # shared --multimodal / --image-size / --n-image-tokens helpers
 ```
 
 ## 2. Configs
@@ -75,14 +76,121 @@ torchrun --nproc_per_node=8 scripts/train_rdt.py --config pretrain \
 
 # OMVT vision-tower SSL (Phase 1 — OCR / masked-patch / orientation / layout-order)
 python -m scripts.train_omvt_ssl --output runs/omvt_ssl
+#   → real data: --data path/to/mm_shards/*.jsonl
 
 # OMVT → RDT alignment (Phase 3 — vision tokens injected at <image_patch>)
 python -m scripts.train_vlm_align --output runs/vlm_align [--freeze-rdt]
+#   → real data: --data path/to/mm_shards/*.jsonl [--frozen-vision]
+
+# Joint multimodal RDT pretraining
+python -m scripts.train_rdt --config pretrain --multimodal \
+    --image-size 64 --n-image-tokens 9 \
+    --data path/to/mm_shards/*.jsonl --output runs/rdt_mm
 ```
 
 Resume: `--resume runs/rdt/latest` (auto-detects FSDP / DDP / single).
 
-## 4. Activation-memory strategy (P0)
+## 4. From cold-start to formal pretraining
+
+The end-to-end workflow is `bundle → JSONL → encoded JSONL → train`.
+
+### 4.1 Environment
+
+```bash
+pip install -e .[model,train,dist,log]      # core
+pip install -e .[image]                     # + Pillow for multimodal
+```
+
+`torch>=2.1` is required; `mamba-ssm>=2.2` is required when any production
+config (`small`/`base`/`pretrain`) sets `use_official_mamba=True`. CPU
+smoke runs use the `NaiveSSM` fallback automatically.
+
+### 4.2 Build a tokenizer bundle
+
+```python
+# build_bundle.py
+from Tokenizer.unified.bundle import TokenizerBundle
+
+bundle = TokenizerBundle.from_files(
+    morphbpe_path="artifacts/morphbpe.json",
+    zh_source="Qwen/Qwen2.5-0.5B",   # HF id or local dir
+    en_source="meta-llama/Llama-3.2-1B",
+    patch_size=14,
+    merge_size=2,
+)
+bundle.save("artifacts/bundle/")
+```
+
+Reload later with `TokenizerBundle.from_dir("artifacts/bundle/")`. For
+smoke runs, reuse `Tokenizer.tests.test_pretraining_builder.build_smoke_bundle`.
+
+### 4.3 Prepare data
+
+**Text:** point `Tokenizer/tools/build_pretraining_data.py` at a directory
+of raw `.txt` / `.jsonl` files; it emits sharded `<name>.jsonl` rows with
+`input_ids / attention_mask / labels / word_pos / morph_depth`.
+
+**Multimodal:** two-stage flow.
+
+```bash
+# 1. Pair {stem.png, stem.txt|json} → raw multimodal JSONL.
+python -m Tokenizer.tools.build_ocr_data \
+    --input  data/raw_ocr/ \
+    --output data/raw_mm.jsonl
+
+# 2. Encode the raw rows through the tokenizer bundle, preserving images /
+#    ocr_labels / reading_order (they flow through EncodedSample as-is).
+python -m Tokenizer.tools.build_pretraining_data \
+    --tokenizer-bundle artifacts/bundle/ \
+    --input  data/raw_mm.jsonl \
+    --output data/mm_shards/shard_00.jsonl
+```
+
+Row schema is documented in
+[`Tokenizer/docs/multimodal_data_format.md`](../Tokenizer/docs/multimodal_data_format.md).
+
+### 4.4 Pick `--n-image-tokens` carefully (multimodal only)
+
+`MultimodalProcessor` expands every `<image>` placeholder into
+`image_patch_count(W, H, patch_size=14, merge_size=2)` `<image_patch>`
+slots in the text stream. `OMVTConfig.compress_to` **must** equal this
+count, otherwise `inject_visual_features` will refuse the batch.
+
+| Image size | Patches per image |
+|------------|-------------------|
+| 56 × 56    | 4                 |
+| 64 × 64    | 9                 |
+| 112 × 112  | 16                |
+| 224 × 224  | 64                |
+
+CLI: set `--image-size <S>` and `--n-image-tokens <count>` so that
+`count == ceil(ceil(S/14)/2)²`. The smoke uses 64 / 9.
+
+### 4.5 Launch pretraining
+
+```bash
+# Text-only formal run
+torchrun --nproc_per_node=8 scripts/train_rdt.py \
+    --config pretrain --dist fsdp --precision bf16 \
+    --grad-ckpt-recurrent on --bptt-window 4 \
+    --data "data/text_shards/*.jsonl" \
+    --output runs/rdt_pretrain
+
+# Multimodal formal run (pre-aligned OMVT injector + pixel collator)
+torchrun --nproc_per_node=8 scripts/train_rdt.py \
+    --config pretrain --dist fsdp --precision bf16 \
+    --multimodal --image-size 224 --n-image-tokens 64 \
+    --grad-ckpt-recurrent on --bptt-window 4 \
+    --data "data/mm_shards/*.jsonl" \
+    --output runs/rdt_pretrain_mm
+```
+
+Recommended P0/P1 order (multimodal): warm OMVT alone via
+`train_omvt_ssl --data`, then run a short `train_vlm_align --data
+--frozen-vision` to settle the projector, then unfreeze for the joint
+`train_rdt --multimodal` run.
+
+## 5. Activation-memory strategy (P0)
 
 The recurrent core dominates activation memory:
 `recurrent_steps × block_layers × L × d_model`. We control it with three
@@ -105,7 +213,7 @@ FSDP uses `transformer_auto_wrap_policy` over
 recurrent steps do **not** share a single shard — that would erase the
 sharding benefit.
 
-## 5. Vision pathway
+## 6. Vision pathway
 
 `VisionInjector` is a dispatcher:
 
@@ -129,11 +237,12 @@ Three-phase roadmap:
 from Sobel-edge statistics (vertical/horizontal/square/layout), so the
 vision tower stays self-contained during Phase 1 SSL.
 
-## 6. Testing & smoke
+## 7. Testing & smoke
 
 ```bash
-./scripts/test_all.sh       # Tokenizer + Model unittests + Rust normalizer
-./scripts/smoke_all.sh      # 5 acceptance smoke runs (single + DDP + VLM + SSL)
+./scripts/test_all.sh           # Tokenizer + Model unittests + Rust normalizer
+./scripts/smoke_all.sh          # 6 acceptance smoke runs (text + DDP + VLM + SSL + multimodal)
+./scripts/smoke_multimodal.sh   # multimodal alone (PIL imgs → JSONL → trainers)
 ```
 
 Acceptance items covered by `smoke_all.sh`:
@@ -143,8 +252,11 @@ Acceptance items covered by `smoke_all.sh`:
 3. VLM alignment with OMVT vision tower injected into RDT.
 4. OMVT vision-tower SSL with all four heads + losses.
 5. OMVT → RDT end-to-end (covered by #3 above).
+6. Multimodal end-to-end: PIL images → `build_ocr_data` →
+   `build_pretraining_data` → `train_omvt_ssl --data` →
+   `train_vlm_align --data` (covered by `smoke_multimodal.sh`).
 
-## 7. Mamba official fail-fast
+## 8. Mamba official fail-fast
 
 `Mamba3Layer._build_official` no longer silently swallows constructor
 mismatches: a missing parameter raises with an "upgrade `mamba-ssm`"
