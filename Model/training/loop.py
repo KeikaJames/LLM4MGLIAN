@@ -107,6 +107,9 @@ def train_one_step(
     if scaler is None and cfg.precision == "fp16":
         scaler = _grad_scaler_for(model, cfg, device_type)
         if scaler is not None:
+            pending = state.extra.pop("grad_scaler_state", None)
+            if pending is not None:
+                scaler.load_state_dict(pending)
             state.extra["grad_scaler"] = scaler
 
     rec_steps = None

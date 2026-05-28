@@ -1,0 +1,79 @@
+# -*- coding: utf-8 -*-
+
+"""Unit tests for fp16 GradScaler checkpoint persistence/restore."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+
+from Model.training.checkpoint import load_checkpoint, resume_state, save_checkpoint
+from Model.training.loop import TrainState
+
+
+class _StubScaler:
+    """Minimal scaler exposing the state_dict/load_state_dict contract."""
+
+    def __init__(self, scale: float = 1024.0, growth_tracker: int = 7) -> None:
+        self._state = {"scale": scale, "_growth_tracker": growth_tracker}
+
+    def state_dict(self) -> dict:
+        return dict(self._state)
+
+    def load_state_dict(self, state: dict) -> None:
+        self._state = dict(state)
+
+
+class CheckpointScalerStateTest(unittest.TestCase):
+    def _make_artifacts(self):
+        model = nn.Linear(4, 4)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
+        return model, optimizer, scheduler
+
+    def test_scaler_state_roundtrips_through_checkpoint(self) -> None:
+        model, optimizer, scheduler = self._make_artifacts()
+        scaler = _StubScaler(scale=2048.0, growth_tracker=3)
+        with tempfile.TemporaryDirectory() as tmp:
+            save_checkpoint(
+                tmp, 5, model, optimizer, scheduler, scaler=scaler, keep_last_n=0
+            )
+            self.assertTrue((Path(tmp) / "latest" / "scaler.pt").exists())
+
+            payload = load_checkpoint(Path(tmp) / "latest")
+            self.assertEqual(payload.scaler_state, {"scale": 2048.0, "_growth_tracker": 3})
+
+            # resume_state must stash the scaler state into TrainState.extra so the
+            # lazily created scaler in train_one_step can restore its dynamic scale.
+            state = TrainState()
+            resume_state(Path(tmp) / "latest", model, optimizer, scheduler, state=state)
+            self.assertEqual(
+                state.extra["grad_scaler_state"],
+                {"scale": 2048.0, "_growth_tracker": 3},
+            )
+
+            # A fresh scaler restoring the stashed state recovers the exact scale.
+            fresh = _StubScaler()
+            fresh.load_state_dict(state.extra["grad_scaler_state"])
+            self.assertEqual(fresh.state_dict()["scale"], 2048.0)
+
+    def test_missing_scaler_is_none_and_not_stashed(self) -> None:
+        model, optimizer, scheduler = self._make_artifacts()
+        with tempfile.TemporaryDirectory() as tmp:
+            save_checkpoint(tmp, 1, model, optimizer, scheduler, keep_last_n=0)
+            self.assertFalse((Path(tmp) / "latest" / "scaler.pt").exists())
+
+            payload = load_checkpoint(Path(tmp) / "latest")
+            self.assertIsNone(payload.scaler_state)
+
+            state = TrainState()
+            resume_state(Path(tmp) / "latest", model, optimizer, scheduler, state=state)
+            self.assertNotIn("grad_scaler_state", state.extra)
+
+
+if __name__ == "__main__":
+    unittest.main()

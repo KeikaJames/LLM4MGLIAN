@@ -265,7 +265,9 @@ def main(argv: list[str] | None = None) -> int:
 
     state = TrainState()
     if train_cfg.resume:
-        state.step = resume_state(train_cfg.resume, model, optimizer, scheduler)
+        state.step = resume_state(
+            train_cfg.resume, model, optimizer, scheduler, state=state
+        )
 
     if args.smoke:
         batch_iter = _smoke_batches(model_cfg, train_cfg)
@@ -317,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
                     scheduler,
                     metadata={"config": args.config},
                     keep_last_n=train_cfg.keep_last_n,
+                    scaler=state.extra.get("grad_scaler"),
                 )
     finally:
         logger.close()
@@ -334,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
                 scheduler,
                 metadata={"config": args.config, "final": True},
                 keep_last_n=train_cfg.keep_last_n,
+                scaler=state.extra.get("grad_scaler"),
             )
     return 0
 

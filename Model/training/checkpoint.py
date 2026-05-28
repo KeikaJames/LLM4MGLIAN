@@ -25,6 +25,7 @@ class CheckpointPayload:
     scheduler_state: dict[str, Any] | None
     rng_state: dict[str, Any]
     metadata: dict[str, Any]
+    scaler_state: dict[str, Any] | None = None
 
 
 def _unwrap(model: nn.Module) -> nn.Module:
@@ -105,6 +106,7 @@ def save_checkpoint(
     scheduler: torch.optim.lr_scheduler._LRScheduler | None,
     metadata: dict[str, Any] | None = None,
     keep_last_n: int = 0,
+    scaler: Any = None,
 ) -> Path | None:
     """Save a step checkpoint under ``{output_dir}/step_{step:08d}/``."""
 
@@ -122,6 +124,8 @@ def save_checkpoint(
     if scheduler is not None:
         torch.save(scheduler.state_dict(), step_dir / "scheduler.pt")
     torch.save(_rng_state(), step_dir / "rng.pt")
+    if scaler is not None:
+        torch.save(scaler.state_dict(), step_dir / "scaler.pt")
     torch.save(
         {"step": step, "metadata": metadata or {}},
         step_dir / "meta.pt",
@@ -158,6 +162,7 @@ def load_checkpoint(path: str | Path) -> CheckpointPayload:
     sched_path = p / "scheduler.pt"
     rng_path = p / "rng.pt"
     meta_path = p / "meta.pt"
+    scaler_path = p / "scaler.pt"
 
     opt_state = (
         torch.load(opt_path, map_location="cpu", weights_only=False)
@@ -179,6 +184,11 @@ def load_checkpoint(path: str | Path) -> CheckpointPayload:
         if meta_path.exists()
         else {"step": 0, "metadata": {}}
     )
+    scaler_state = (
+        torch.load(scaler_path, map_location="cpu", weights_only=False)
+        if scaler_path.exists()
+        else None
+    )
 
     return CheckpointPayload(
         step=int(meta.get("step", 0)),
@@ -187,6 +197,7 @@ def load_checkpoint(path: str | Path) -> CheckpointPayload:
         scheduler_state=sched_state,
         rng_state=rng_state,
         metadata=meta.get("metadata", {}),
+        scaler_state=scaler_state,
     )
 
 
@@ -195,8 +206,15 @@ def resume_state(
     model: nn.Module,
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
+    state: Any = None,
 ) -> int:
-    """Load a checkpoint into the given model/optimizer/scheduler."""
+    """Load a checkpoint into the given model/optimizer/scheduler.
+
+    If ``state`` (a ``TrainState``) is provided and the checkpoint stored a
+    fp16 ``GradScaler`` state, it is stashed in ``state.extra`` so the lazily
+    created scaler in ``train_one_step`` restores its dynamic loss scale,
+    keeping overflow/scheduler decisions consistent with an uninterrupted run.
+    """
 
     payload = load_checkpoint(path)
     _load_model_state(model, payload.model_state)
@@ -206,6 +224,8 @@ def resume_state(
         scheduler.load_state_dict(payload.scheduler_state)
     if payload.rng_state:
         _restore_rng(payload.rng_state)
+    if state is not None and payload.scaler_state is not None:
+        state.extra["grad_scaler_state"] = payload.scaler_state
     if is_distributed():
         torch.distributed.barrier()
     return payload.step
