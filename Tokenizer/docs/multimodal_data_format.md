@@ -18,7 +18,7 @@
 
 ### 必填字段
 - `input_ids` / `attention_mask` / `labels` 由 `PretrainingDataBuilder` 在 `build_pretraining_data` 阶段从 `text` 生成；下游不需要手填。
-- `text`：自然语言提示。`<image>` 占位符会被 `MultimodalProcessor` 展开成 `n_image_tokens` 个 `<image_patch>` 槽位（默认 8，由 `OMVTConfig.compress_to` 控制）。
+- `text`：自然语言提示。`<image>` 占位符会被 `MultimodalProcessor` 展开成若干个 `<image_patch>` 槽位；数量由 `image_patch_count(width, height, patch_size=14, merge_size=2)` 决定，并且必须等于训练时的 `OMVTConfig.compress_to`。
 
 ### 多模态可选字段
 | 字段 | 形状 | 说明 |
@@ -37,7 +37,7 @@
 
 | 脚本 | 启用多模态的方式 |
 | --- | --- |
-| `scripts/train_rdt.py` | `--multimodal --image-size 56 --n-image-tokens 8 --data <jsonl>` |
+| `scripts/train_rdt.py` | `--multimodal --image-size 56 --n-image-tokens 4 --data <jsonl>` |
 | `scripts/train_vlm_align.py` | `--data <jsonl>`（同时锁住视觉塔可加 `--frozen-vision`） |
 | `scripts/train_omvt_ssl.py` | `--data <jsonl>`（orientation 自监督自动生效；OCR/layout 头按字段降级） |
 
@@ -59,8 +59,8 @@
 {
   "text": "<image>",
   "images": [page_path],
-  "ocr_labels": [token_ids],          # 由分词器编码后的 id 序列
-  "reading_order": [layout_order],    # 可选: 视觉 layout 模型预测的阅读序
+  "ocr_labels": [token_ids],          # 单图简写；builder 会规范成 [[...]]
+  "reading_order": [layout_order],    # 单图简写；builder 会规范成 [[...]]
 }
 ```
 也可用 `Tokenizer/tools/build_ocr_data.py` 一键转换 `{stem.png, stem.txt or stem.json}` 配对目录：

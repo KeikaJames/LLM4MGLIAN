@@ -192,6 +192,58 @@ class DualTokenizerTest(unittest.TestCase):
         self.assertEqual(ids, [tokenizer.vocab["᠃"]])
         self.assertEqual(tokenizer.decode(ids), "᠃")
 
+    def test_newline_and_tab_are_preserved_distinctly(self):
+        # Regression: newline/tab/CR must NOT collapse into the space token
+        # "▁" (which decodes to a single space). They route to the byte
+        # fallback so document/line structure survives round-trip and the
+        # model can learn it.
+        tokenizer = build_fake_tokenizer()
+        for text in ("hello\nhello", "test\ttest", "a\r\nb", "x\n\ny"):
+            result = tokenizer.encode_with_spans(text)
+            self.assertEqual(tokenizer.decode(result.input_ids), text)
+            # the whitespace structure chars must not be tagged as "space"
+            self.assertFalse(
+                any(tok.track == "space" for tok in result.tokens),
+                f"structural whitespace wrongly folded to ▁ for {text!r}",
+            )
+
+    def test_plain_space_still_folds_to_space_token(self):
+        tokenizer = build_fake_tokenizer()
+        result = tokenizer.encode_with_spans("hello  hello")
+        space_toks = [t for t in result.tokens if t.track == "space"]
+        self.assertEqual(len(space_toks), 2)
+        self.assertEqual(tokenizer.decode(result.input_ids), "hello  hello")
+
+
+class MongolianFallbackOffsetTest(unittest.TestCase):
+    """The no-offset MorphBPE fallback must yield monotonic per-piece spans."""
+
+    def test_multi_piece_fallback_offsets_are_monotonic(self):
+        class MultiPieceMorphBPE:
+            # whole word -> two pieces, exercised via the .encode (no offsets) path
+            vocab = {"ᠮᠣᠩ": 0, "ᠭᠣᠯ": 1}
+
+            def encode(self, text):
+                return [0, 1]
+
+        word = "ᠮᠣᠩᠭᠣᠯ"
+        vocab = build_unified_vocab(
+            morphbpe_vocab=MultiPieceMorphBPE.vocab,
+            chinese_tokens=[],
+            english_tokens=[],
+            misc_tokens=build_misc_tokens(),
+        )
+        zh = FakeHFTokenizer({})
+        en = FakeHFTokenizer({})
+        tokenizer = DualTrackTokenizer(vocab, MultiPieceMorphBPE(), zh, en)
+
+        result = tokenizer.encode_with_spans(word)
+        mn = [t for t in result.tokens if t.track == "mn"]
+        self.assertEqual(len(mn), 2)
+        # Distinct, monotonic, non-overlapping spans (not the whole word twice).
+        self.assertEqual((mn[0].start, mn[0].end), (0, 3))
+        self.assertEqual((mn[1].start, mn[1].end), (3, 6))
+
 
 if __name__ == "__main__":
     unittest.main()

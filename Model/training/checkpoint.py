@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +66,16 @@ def _load_model_state(model: nn.Module, state: dict[str, Any]) -> None:
 
 
 def _rng_state() -> dict[str, Any]:
-    state: dict[str, Any] = {"cpu": torch.get_rng_state()}
+    state: dict[str, Any] = {
+        "cpu": torch.get_rng_state(),
+        "python": random.getstate(),
+    }
+    try:
+        import numpy as np
+
+        state["numpy"] = np.random.get_state()
+    except ImportError:  # pragma: no cover - numpy is an optional dep
+        pass
     if torch.cuda.is_available():
         state["cuda"] = torch.cuda.get_rng_state_all()
     return state
@@ -74,6 +84,15 @@ def _rng_state() -> dict[str, Any]:
 def _restore_rng(state: dict[str, Any]) -> None:
     if "cpu" in state:
         torch.set_rng_state(state["cpu"])
+    if "python" in state:
+        random.setstate(state["python"])
+    if "numpy" in state:
+        try:
+            import numpy as np
+
+            np.random.set_state(state["numpy"])
+        except ImportError:  # pragma: no cover - numpy is an optional dep
+            pass
     if "cuda" in state and torch.cuda.is_available():
         torch.cuda.set_rng_state_all(state["cuda"])
 

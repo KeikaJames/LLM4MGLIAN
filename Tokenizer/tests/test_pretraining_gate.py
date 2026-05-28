@@ -119,6 +119,34 @@ class PretrainingGateTest(unittest.TestCase):
             result["failures"],
         )
 
+    def test_encoded_row_media_payload_count_must_match_spans(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_smoke_bundle(tmp)
+            bundle_dir = os.path.join(tmp, "bundle")
+            bundle.save_dir(bundle_dir)
+            builder = PretrainingDataBuilder(bundle, max_length=128)
+            sample = builder.encode_json_obj(
+                {
+                    "type": "image_text",
+                    "text": "文字 <image> test",
+                    "images": ["x.jpg"],
+                    "image_sizes": [[14, 14]],
+                }
+            )
+            row = encoded_sample_to_dict(sample)
+            row["images"].append("extra.jpg")
+            inp = os.path.join(tmp, "bad_media.jsonl")
+            with open(inp, "w", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+            result = run_gate(bundle_dir, inp, max_length=128)
+
+        self.assertFalse(result["passed"])
+        self.assertTrue(
+            any("images count" in item["message"] for item in result["failures"]),
+            result["failures"],
+        )
+
     def test_malformed_encoded_row_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle = build_smoke_bundle(tmp)

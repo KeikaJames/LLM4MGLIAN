@@ -34,6 +34,7 @@ from Model.omvt import OMVTInjector
 from Model.training import (
     PretrainingCollator,
     TrainState,
+    build_omvt_cfg,
     build_optimizer,
     build_scheduler,
     train_one_step,
@@ -44,6 +45,21 @@ from Tokenizer.multimodal import PILImageProcessor
 
 @unittest.skipIf(Image is None, "Pillow not installed")
 class MultimodalDataloaderTest(unittest.TestCase):
+    def test_multimodal_cli_derives_image_token_default(self) -> None:
+        args = type(
+            "Args",
+            (),
+            {
+                "multimodal": True,
+                "image_size": 64,
+                "n_image_tokens": None,
+                "d_vision": 32,
+            },
+        )()
+        cfg = build_omvt_cfg(args)
+        self.assertIsNotNone(cfg)
+        self.assertEqual(cfg.compress_to, 9)
+
     def test_pixel_aware_collator_and_step(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             img_path = os.path.join(tmp, "t.png")

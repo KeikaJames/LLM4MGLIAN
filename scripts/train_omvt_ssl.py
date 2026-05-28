@@ -30,6 +30,7 @@ from Model.omvt import (
     OCRReconstructionHead,
     OMVTVisionTower,
     OrientationHead,
+    collate_omvt_batch,
     layout_order_loss,
     masked_patch_loss,
     ocr_reconstruction_loss,
@@ -145,6 +146,40 @@ def _rotate_batch(images: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def _masked_patch_step(
+    tower: OMVTVisionTower,
+    mp_head: MaskedPatchHead,
+    images: torch.Tensor,
+    cfg: OMVTConfig,
+) -> torch.Tensor:
+    """Real masked-image-modeling loss on the square-patch stream.
+
+    A random ``mask_ratio`` fraction of square patches is zeroed *before*
+    encoding; the head must reconstruct the original pixels of those hidden
+    patches from the (position-aware) encoder output. Loss is scored only on
+    masked positions — this is a genuine SSL signal, unlike regressing onto
+    random noise.
+    """
+
+    batch = collate_omvt_batch(images, cfg)
+    target = batch["square_patches"]  # [B, n_patches, patch_pixels]
+    bbox = batch["square_bbox"]
+    bsz, n_patches, _ = target.shape
+
+    mask = torch.rand(bsz, n_patches, device=target.device) < cfg.mask_ratio
+    # Guarantee at least one masked patch per row so every sample contributes.
+    none_masked = ~mask.any(dim=1)
+    if bool(none_masked.any()):
+        forced = torch.randint(0, n_patches, (int(none_masked.sum()),), device=target.device)
+        mask[none_masked, forced] = True
+
+    masked_in = target.clone()
+    masked_in[mask] = 0.0
+    feats = tower.encoders["square"](masked_in, bbox)  # [B, n_patches, d_vision]
+    predicted = mp_head(feats)  # [B, n_patches, patch_pixels]
+    return masked_patch_loss(predicted, target, mask=mask)
+
+
 def main(argv=None):
     args = parse_args(argv)
     torch.manual_seed(args.seed)
@@ -216,9 +251,7 @@ def main(argv=None):
             loss_ocr = ocr_reconstruction_loss(ocr_logits, padded)
             w_ocr = cfg.w_ocr
 
-        masked = mp_head(feats)
-        true_patches = torch.randn_like(masked)
-        loss_mp = masked_patch_loss(masked, true_patches)
+        loss_mp = _masked_patch_step(tower, mp_head, images, cfg)
 
         ori_logits = ori_head(feats)
         if real_iter is None:

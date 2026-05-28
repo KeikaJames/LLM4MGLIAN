@@ -57,6 +57,29 @@ class UnevenShardsTest(unittest.TestCase):
             self.assertEqual(sorted(seen), sorted(paths))
             self.assertEqual(len(seen), len(set(seen)), "ranks must not overlap")
 
+    def test_small_shard_flushes_before_shuffle_buffer_is_full(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_shards(Path(tmp), 1)
+            ds = StreamingJsonlDataset(paths, shuffle_buffer=1024, infinite=True)
+            row = next(iter(ds))
+            self.assertEqual(row["input_ids"], [0])
+
+    def test_empty_shard_raises_instead_of_spinning_forever(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.jsonl"
+            path.write_text("", encoding="utf-8")
+            ds = StreamingJsonlDataset([path], infinite=True)
+            with self.assertRaisesRegex(ValueError, "no JSONL rows"):
+                next(iter(ds))
+
+    def test_malformed_json_raises_with_location(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.jsonl"
+            path.write_text("{bad json}\n", encoding="utf-8")
+            ds = StreamingJsonlDataset([path], infinite=False)
+            with self.assertRaisesRegex(ValueError, "bad.jsonl:1"):
+                next(iter(ds))
+
 
 if __name__ == "__main__":
     unittest.main()

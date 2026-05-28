@@ -222,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         return rc
     model_cfg_preview = _build_model_cfg(args)
     train_cfg_preview = _build_train_cfg(args, model_cfg_preview)
+    omvt_cfg = build_omvt_cfg(args)
     rank, world_size, local_rank = init_distributed(backend=train_cfg_preview.dist_backend)
     if args.dist != "single" and world_size == 1 and not args.smoke:
         print(
@@ -243,7 +244,6 @@ def main(argv: list[str] | None = None) -> int:
         Path(train_cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
     model = RDTForCausalLM(model_cfg).to(device)
-    omvt_cfg = build_omvt_cfg(args)
     if omvt_cfg is not None:
         # Pre-install a matching-size OMVT injector so the dispatcher
         # does not lazily build a default-sized one on first forward
@@ -256,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
     optimizer = build_optimizer(model, train_cfg)
     scheduler = build_scheduler(optimizer, train_cfg)
 
+    # NOTE: optimizer is built on the pre-wrap parameters. Under FSDP this is
+    # only safe because we wrap with ``use_orig_params=True`` (see
+    # ``apply_parallelism``), which keeps the original ``nn.Parameter`` objects
+    # the optimizer references. If that flag ever changes, the optimizer must be
+    # built *after* ``apply_parallelism`` instead. Verify on the GPU cluster.
     model = apply_parallelism(model, train_cfg, local_rank)
 
     state = TrainState()

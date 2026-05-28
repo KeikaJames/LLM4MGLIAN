@@ -40,6 +40,12 @@ except ImportError:  # pragma: no cover - supports direct script execution.
 
 SPECIAL_TOKEN_TEXTS = tuple(sorted(SPECIAL_TOKENS, key=len, reverse=True))
 
+# Fast gate for ``special_at``: a special token can only begin at a character
+# that is the first character of some special token. Checking membership in
+# this small set lets the hot per-character scan skip the full startswith loop
+# for the overwhelming majority of text characters.
+_SPECIAL_FIRST_CHARS = frozenset(t[0] for t in SPECIAL_TOKEN_TEXTS if t)
+
 MONGOLIAN_RANGES = [
     (0x1800, 0x18AF),
     (0x11660, 0x1167F),
@@ -92,9 +98,6 @@ CJK_SYMBOL_RANGES = [
 
 SPACE_CHARS = {
     " ",
-    "\t",
-    "\n",
-    "\r",
     "\u00a0",
     "\u202f",
 }
@@ -149,6 +152,8 @@ def contextual_char_lang(text: str, index: int) -> str:
 
 
 def special_at(text: str, start: int) -> str | None:
+    if start >= len(text) or text[start] not in _SPECIAL_FIRST_CHARS:
+        return None
     for token in SPECIAL_TOKEN_TEXTS:
         if text.startswith(token, start):
             return token
@@ -253,6 +258,11 @@ class DualTrackTokenizer:
             for token, local_id in morphbpe.vocab.items()
             if token in unified_vocab
         }
+        # Reverse map used only by the no-offset MorphBPE fallback to recover
+        # each piece's surface text and assign monotonic, non-overlapping spans.
+        self.mn_local_id_to_text = {
+            local_id: token for token, local_id in morphbpe.vocab.items()
+        }
 
         self.zh_local_to_global = self._build_hf_map(zh_hf_tokenizer, "zh")
         self.en_local_to_global = self._build_hf_map(en_hf_tokenizer, "en")
@@ -350,16 +360,37 @@ class DualTrackTokenizer:
             return tokens
 
         local_ids = self.morphbpe.encode(span.text)
-        return [
-            EncodedToken(
-                self.mn_local_to_global.get(i, self.unk_id),
-                span.text,
-                "mn",
-                span.start,
-                span.end,
+        # No per-token offsets available: recover each piece's surface from the
+        # reverse vocab and walk a cursor through the span so offsets stay
+        # monotonic and non-overlapping. (The previous behavior assigned the
+        # whole span's text/offsets to *every* token, which corrupts offsets
+        # for any multi-piece word.)
+        tokens: list[EncodedToken] = []
+        cursor = 0
+        text = span.text
+        for local_id in local_ids:
+            piece = self.mn_local_id_to_text.get(local_id, "")
+            found = text.find(piece, cursor) if piece else -1
+            if found >= 0:
+                start, end = found, found + len(piece)
+                surface = piece
+                cursor = end
+            else:
+                # Piece not locatable in the raw text (e.g. normalization
+                # dropped variation selectors): emit a zero-width span at the
+                # cursor rather than overlapping the whole word.
+                start = end = cursor
+                surface = piece
+            tokens.append(
+                EncodedToken(
+                    self.mn_local_to_global.get(local_id, self.unk_id),
+                    surface,
+                    "mn",
+                    span.start + start,
+                    span.start + end,
+                )
             )
-            for i in local_ids
-        ]
+        return tokens
 
     def _encode_hf_track(
         self, track_tokenizer: HFTrackTokenizer, span: Span

@@ -56,6 +56,54 @@ def _make_batch(model_cfg: RDTConfig, length: int = 8) -> dict:
 
 
 class TrainingLoopSmokeTest(unittest.TestCase):
+    def test_train_step_uses_chunked_loss_path(self):
+        torch.manual_seed(0)
+        cfg = _tiny_cfg()
+        cfg.loss_chunk_size = 2
+
+        class RecordingModel(RDTForCausalLM):
+            def __init__(self, model_cfg):
+                super().__init__(model_cfg)
+                self.seen_return_logits: list[bool | None] = []
+
+            def forward(self, *args, **kwargs):
+                self.seen_return_logits.append(kwargs.get("return_logits"))
+                return super().forward(*args, **kwargs)
+
+        train_cfg = TrainingConfig(
+            train_data="",
+            seq_len=8,
+            micro_batch_size=2,
+            grad_accum_steps=1,
+            num_workers=0,
+            learning_rate=1e-3,
+            max_steps=1,
+            warmup_steps=1,
+            precision="fp32",
+            use_loss_chunking=True,
+        )
+        model = RecordingModel(cfg)
+        optim = build_optimizer(model, train_cfg)
+        sched = build_scheduler(optim, train_cfg)
+        state = TrainState()
+        batch = _make_batch(cfg)
+
+        def _iter():
+            while True:
+                yield batch
+
+        train_one_step(
+            model,
+            _iter(),
+            optim,
+            sched,
+            train_cfg,
+            state,
+            device=torch.device("cpu"),
+        )
+
+        self.assertEqual(model.seen_return_logits, [False])
+
     def test_train_step_and_resume(self):
         torch.manual_seed(0)
         cfg = _tiny_cfg()

@@ -126,8 +126,8 @@ class PretrainingDataBuilder:
                 image_sizes=list(obj.get("image_sizes") or []),
                 videos=list(obj.get("videos") or []),
                 video_sizes=list(obj.get("video_sizes") or []),
-                ocr_labels=list(obj.get("ocr_labels") or []),
-                reading_order=list(obj.get("reading_order") or []),
+                ocr_labels=_nested_int_lists(obj.get("ocr_labels")),
+                reading_order=_nested_int_lists(obj.get("reading_order")),
             )
             return self._truncate(sample)
         return self.encode_text(text, metadata=self._metadata(obj))
@@ -171,8 +171,8 @@ class PretrainingDataBuilder:
             image_sizes=list(image_sizes or []),
             videos=list(videos or []),
             video_sizes=list(video_sizes or []),
-            ocr_labels=[list(item) for item in (ocr_labels or [])],
-            reading_order=[list(item) for item in (reading_order or [])],
+            ocr_labels=_nested_int_lists(ocr_labels),
+            reading_order=_nested_int_lists(reading_order),
         )
 
     def _build_labels(
@@ -196,6 +196,8 @@ class PretrainingDataBuilder:
             key: [span for span in spans if span[1] <= cutoff]
             for key, spans in sample.modality_spans.items()
         }
+        n_image_spans = len(modality_spans.get("image_token_spans", []))
+        n_video_spans = len(modality_spans.get("video_token_spans", []))
         metadata = dict(sample.metadata)
         metadata["truncated"] = True
         return EncodedSample(
@@ -207,12 +209,14 @@ class PretrainingDataBuilder:
             morph_depth=sample.morph_depth[:cutoff],
             modality_spans=modality_spans,
             metadata=metadata,
-            images=list(sample.images),
-            image_sizes=list(sample.image_sizes),
-            videos=list(sample.videos),
-            video_sizes=list(sample.video_sizes),
-            ocr_labels=[list(item) for item in sample.ocr_labels],
-            reading_order=[list(item) for item in sample.reading_order],
+            images=list(sample.images[:n_image_spans]),
+            image_sizes=list(sample.image_sizes[:n_image_spans]),
+            videos=list(sample.videos[:n_video_spans]),
+            video_sizes=list(sample.video_sizes[:n_video_spans]),
+            ocr_labels=[list(item) for item in sample.ocr_labels[:n_image_spans]],
+            reading_order=[
+                list(item) for item in sample.reading_order[:n_image_spans]
+            ],
         )
 
     def _metadata(self, obj: dict) -> dict:
@@ -234,3 +238,22 @@ class PretrainingDataBuilder:
 
 def encoded_sample_to_dict(sample: EncodedSample) -> dict[str, Any]:
     return asdict(sample)
+
+
+def _nested_int_lists(value: Any) -> list[list[int]]:
+    if not value:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("expected a list of int lists")
+    head = value[0] if value else None
+    if isinstance(head, int):
+        return [[int(item) for item in value]]
+    out: list[list[int]] = []
+    for item in value:
+        if item is None:
+            out.append([])
+            continue
+        if not isinstance(item, (list, tuple)):
+            raise ValueError("expected a list of int lists")
+        out.append([int(x) for x in item])
+    return out

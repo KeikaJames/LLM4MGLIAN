@@ -144,8 +144,8 @@ def _sample_from_encoded_row(obj: dict[str, Any]) -> EncodedSample:
         image_sizes=list(obj.get("image_sizes") or []),
         videos=list(obj.get("videos") or []),
         video_sizes=list(obj.get("video_sizes") or []),
-        ocr_labels=[list(item) for item in (obj.get("ocr_labels") or [])],
-        reading_order=[list(item) for item in (obj.get("reading_order") or [])],
+        ocr_labels=_nested_int_lists(obj.get("ocr_labels")),
+        reading_order=_nested_int_lists(obj.get("reading_order")),
     )
 
 
@@ -248,6 +248,44 @@ def _validate_sample(
             "<video_end>",
         )
     )
+    failures.extend(_validate_media_payloads(sample, idx))
+    return failures
+
+
+def _validate_media_payloads(
+    sample: EncodedSample, sample_idx: int
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    n_image_spans = len(sample.modality_spans.get("image_token_spans", []))
+    n_video_spans = len(sample.modality_spans.get("video_token_spans", []))
+
+    checks = [
+        ("images", sample.images, n_image_spans),
+        ("videos", sample.videos, n_video_spans),
+    ]
+    for field, values, expected in checks:
+        if len(values) != expected:
+            failures.append(
+                {
+                    "sample": sample_idx,
+                    "message": f"{field} count {len(values)} does not match span count {expected}",
+                }
+            )
+
+    optional_checks = [
+        ("image_sizes", sample.image_sizes, n_image_spans),
+        ("video_sizes", sample.video_sizes, n_video_spans),
+        ("ocr_labels", sample.ocr_labels, n_image_spans),
+        ("reading_order", sample.reading_order, n_image_spans),
+    ]
+    for field, values, expected in optional_checks:
+        if values and len(values) != expected:
+            failures.append(
+                {
+                    "sample": sample_idx,
+                    "message": f"{field} count {len(values)} does not match span count {expected}",
+                }
+            )
     return failures
 
 
@@ -302,6 +340,25 @@ def _validate_spans(
                     }
                 )
     return failures
+
+
+def _nested_int_lists(value: Any) -> list[list[int]]:
+    if not value:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("expected a list of int lists")
+    head = value[0] if value else None
+    if isinstance(head, int):
+        return [[int(item) for item in value]]
+    out: list[list[int]] = []
+    for item in value:
+        if item is None:
+            out.append([])
+            continue
+        if not isinstance(item, (list, tuple)):
+            raise ValueError("expected a list of int lists")
+        out.append([int(x) for x in item])
+    return out
 
 
 def main() -> None:

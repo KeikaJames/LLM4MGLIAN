@@ -38,6 +38,7 @@ from Model.training import (
     train_one_step,
 )
 from Tokenizer.multimodal import PILImageProcessor
+from Tokenizer.multimodal.image_placeholders import image_patch_count
 
 
 def parse_args(argv=None):
@@ -46,7 +47,7 @@ def parse_args(argv=None):
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--image-size", type=int, default=56)
     p.add_argument("--seq-len", type=int, default=24)
-    p.add_argument("--n-image-tokens", type=int, default=8)
+    p.add_argument("--n-image-tokens", type=int, default=None)
     p.add_argument("--freeze-rdt", action="store_true")
     p.add_argument(
         "--frozen-vision",
@@ -66,6 +67,9 @@ def parse_args(argv=None):
 
 
 def _build_omvt_cfg(args) -> OMVTConfig:
+    n_image_tokens = args.n_image_tokens
+    if n_image_tokens is None:
+        n_image_tokens = image_patch_count(args.image_size, args.image_size)
     return OMVTConfig(
         image_size=args.image_size,
         d_vision=64,
@@ -73,7 +77,7 @@ def _build_omvt_cfg(args) -> OMVTConfig:
         horizontal_patch=(args.image_size // 4, args.image_size // 2),
         square_patch=(args.image_size // 4, args.image_size // 4),
         layout_patch=(args.image_size, args.image_size),
-        compress_to=args.n_image_tokens,
+        compress_to=n_image_tokens,
     )
 
 
@@ -97,6 +101,8 @@ def _make_text_batch(args, vocab_floor=300, vocab_ceil=320):
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.n_image_tokens is None:
+        args.n_image_tokens = image_patch_count(args.image_size, args.image_size)
     # Fast-fail validation **before** any device alloc / model construction.
     # Mirrors the train_rdt CLI pattern: misconfigured runs should not pay
     # the cost of building the model only to crash inside the first step.

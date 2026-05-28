@@ -5,45 +5,53 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# Canonical source of special-token ids / vocab segmentation is
+# ``Tokenizer/unified/vocab.py``. The literals below are a standalone fallback
+# used only when the Tokenizer package cannot be imported. They MUST stay in
+# sync with the canonical definitions; ``Model/tests/test_config.py`` asserts it
+# whenever the Tokenizer package is importable.
+_FALLBACK_SPECIAL_TOKENS = {
+    "<pad>": 0,
+    "<unk>": 1,
+    "<bos>": 2,
+    "<eos>": 3,
+    "<img>": 4,
+    "<image>": 5,
+    "<image_start>": 6,
+    "<image_patch>": 7,
+    "<image_end>": 8,
+    "<video>": 9,
+    "<video_start>": 10,
+    "<video_patch>": 11,
+    "<video_end>": 12,
+    "<bbox>": 13,
+    "<ocr>": 14,
+    "<ocr_start>": 15,
+    "<ocr_end>": 16,
+    "▁": 17,
+    "◈": 18,
+    "<doc>": 19,
+    "<table>": 20,
+    "<layout>": 21,
+    "<audio>": 22,
+    "<audio_start>": 23,
+    "<audio_patch>": 24,
+    "<audio_end>": 25,
+}
+
+_FALLBACK_SEGMENT = {
+    "special": (0, 256),
+    "mongolian": (256, 24576),
+    "chinese": (24576, 49152),
+    "english": (49152, 63488),
+    "misc": (63488, 65536),
+}
+
 try:
     from Tokenizer.unified.vocab import SPECIAL_TOKENS, SEGMENT
 except ImportError:
-    SPECIAL_TOKENS = {
-        "<pad>": 0,
-        "<unk>": 1,
-        "<bos>": 2,
-        "<eos>": 3,
-        "<img>": 4,
-        "<image>": 5,
-        "<image_start>": 6,
-        "<image_patch>": 7,
-        "<image_end>": 8,
-        "<video>": 9,
-        "<video_start>": 10,
-        "<video_patch>": 11,
-        "<video_end>": 12,
-        "<bbox>": 13,
-        "<ocr>": 14,
-        "<ocr_start>": 15,
-        "<ocr_end>": 16,
-        "▁": 17,
-        "◈": 18,
-        "<doc>": 19,
-        "<table>": 20,
-        "<layout>": 21,
-        "<audio>": 22,
-        "<audio_start>": 23,
-        "<audio_patch>": 24,
-        "<audio_end>": 25,
-    }
-
-    SEGMENT = {
-        "special": (0, 256),
-        "mongolian": (256, 24576),
-        "chinese": (24576, 49152),
-        "english": (49152, 63488),
-        "misc": (63488, 65536),
-    }
+    SPECIAL_TOKENS = _FALLBACK_SPECIAL_TOKENS
+    SEGMENT = _FALLBACK_SEGMENT
 
 
 VOCAB_SIZE = 65536
@@ -411,7 +419,6 @@ class TrainingConfig:
     grad_accum_steps: int = 1
     num_workers: int = 2
     pin_memory: bool = True
-    pack_sequences: bool = True
     shuffle_buffer: int = 1024
 
     # optimizer (AdamW, decoupled WD)
@@ -517,7 +524,12 @@ class OMVTConfig:
     router_min_route_prob: float = 0.05
     router_temperature: float = 1.0
 
-    # Perceiver compressor
+    # Perceiver compressor.
+    # ``compress_to`` is the number of visual tokens emitted per image and must
+    # equal the number of ``<image_patch>`` slots the data builder writes per
+    # image (the OMVT injector asserts ``count == compress_to`` at forward).
+    # The training CLIs derive it from ``image_patch_count(image_size,...)`` via
+    # ``build_omvt_cfg``; this dataclass default is only a standalone fallback.
     compress_to: int = 256  # output visual tokens per image
     compressor_layers: int = 2
     compressor_heads: int = 8
@@ -530,6 +542,9 @@ class OMVTConfig:
     w_masked_patch: float = 1.0
     w_orientation: float = 0.2
     w_layout_order: float = 0.2
+
+    # fraction of square patches hidden for the masked-patch reconstruction task
+    mask_ratio: float = 0.5
 
     # joint training loss weights (Phase 3)
     w_lm: float = 1.0
@@ -547,6 +562,8 @@ class OMVTConfig:
             raise ValueError("in_channels must be 1 or 3")
         if self.d_vision % self.vision_n_heads != 0:
             raise ValueError("d_vision must be divisible by vision_n_heads")
+        if not 0.0 < self.mask_ratio < 1.0:
+            raise ValueError("mask_ratio must be in (0, 1)")
 
 
 def main() -> None:
