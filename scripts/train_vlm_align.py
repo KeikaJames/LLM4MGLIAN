@@ -22,13 +22,22 @@ from Model.config import (
     EOS_ID,
     IMAGE_PATCH_ID,
     OMVTConfig,
+    PAD_ID,
     TrainingConfig,
     tiny_config,
 )
 from Model.model import RDTForCausalLM
 from Model.omvt import OMVTInjector
 from Model.omvt.patcher import collate_omvt_batch
-from Model.training import RankZeroLogger, build_optimizer, build_scheduler
+from Model.training import (
+    RankZeroLogger,
+    TrainState,
+    build_dataloader,
+    build_optimizer,
+    build_scheduler,
+    train_one_step,
+)
+from Tokenizer.multimodal import PILImageProcessor
 
 
 def parse_args(argv=None):
@@ -39,6 +48,16 @@ def parse_args(argv=None):
     p.add_argument("--seq-len", type=int, default=24)
     p.add_argument("--n-image-tokens", type=int, default=8)
     p.add_argument("--freeze-rdt", action="store_true")
+    p.add_argument(
+        "--frozen-vision",
+        action="store_true",
+        help="freeze the OMVT tower as well (useful for projector-only ablations)",
+    )
+    p.add_argument(
+        "--data",
+        default="",
+        help="JSONL spec for real multimodal pretraining (rows must carry an 'images' field)",
+    )
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--output", default="outputs/vlm_align")
     p.add_argument("--smoke", action="store_true")
@@ -117,9 +136,12 @@ def main(argv=None):
             p.requires_grad_(False)
         for p in model.vision.omvt.parameters():
             p.requires_grad_(True)
+    if args.frozen_vision:
+        for p in model.vision.omvt.parameters():
+            p.requires_grad_(False)
 
     train_cfg = TrainingConfig(
-        train_data="",
+        train_data=args.data,
         seq_len=args.seq_len,
         micro_batch_size=args.batch_size,
         learning_rate=args.lr,
@@ -138,6 +160,36 @@ def main(argv=None):
     logger = RankZeroLogger(args.output, enable_tensorboard=False)
 
     t0 = time.time()
+    if args.data:
+        # Real-data path: pull pixel-aware batches from the streaming
+        # JSONL dataloader and reuse the canonical train_one_step so
+        # CLI behaviour matches train_rdt.
+        dataloader = build_dataloader(
+            args.data,
+            train_cfg,
+            world_size=1,
+            rank=0,
+            pad_id=PAD_ID,
+            image_processor=PILImageProcessor(image_size=args.image_size),
+            omvt_cfg=omvt_cfg,
+        )
+        batch_iter = iter(dataloader)
+        state = TrainState()
+        while state.step < args.steps:
+            metrics = train_one_step(
+                model,
+                batch_iter,
+                optimizer,
+                scheduler,
+                train_cfg,
+                state,
+                device=device,
+            )
+            logger.log(state.step, {"loss": metrics["loss"]})
+        logger.close()
+        print(f"VLM align real-data run OK in {time.time() - t0:.1f}s")
+        return 0
+
     for step in range(1, args.steps + 1):
         input_ids, attention_mask, labels = _make_text_batch(args)
         input_ids = input_ids.to(device)

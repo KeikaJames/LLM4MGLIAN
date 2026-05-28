@@ -35,6 +35,14 @@ def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     for k, v in batch.items():
         if isinstance(v, torch.Tensor):
             out[k] = v.to(device, non_blocking=True)
+        elif isinstance(v, dict):
+            # Pixel batches arrive as ``{"images": ..., "vertical_patches": ...}``;
+            # we have to recurse so every leaf tensor lands on the model's
+            # device. Non-tensor leaves (rare) pass through untouched.
+            out[k] = {
+                kk: vv.to(device, non_blocking=True) if isinstance(vv, torch.Tensor) else vv
+                for kk, vv in v.items()
+            }
         else:
             out[k] = v
     return out
@@ -80,6 +88,7 @@ def train_one_step(
                 labels=batch["labels"],
                 word_pos=batch.get("word_pos"),
                 morph_depth=batch.get("morph_depth"),
+                pixel_values=batch.get("pixel_values"),
                 steps=rec_steps,
                 bptt_window=cfg.bptt_window,
             )
@@ -147,6 +156,7 @@ def evaluate(
                 labels=batch["labels"],
                 word_pos=batch.get("word_pos"),
                 morph_depth=batch.get("morph_depth"),
+                pixel_values=batch.get("pixel_values"),
             )
         tok = int(batch["attention_mask"].sum().item())
         total_loss += float(out["loss"].item()) * tok

@@ -32,6 +32,11 @@ from Model.training.dist import (
 )
 from Model.training.logging import RankZeroLogger, throughput_str
 from Model.training.loop import TrainState, evaluate, train_one_step
+from Model.training.multimodal_cli import (
+    add_multimodal_args,
+    build_image_processor,
+    build_omvt_cfg,
+)
 from Model.training.optim import (
     build_optimizer,
     build_scheduler,
@@ -44,8 +49,11 @@ __all__ = [
     "RankZeroLogger",
     "StreamingJsonlDataset",
     "TrainState",
+    "add_multimodal_args",
     "apply_parallelism",
     "build_dataloader",
+    "build_image_processor",
+    "build_omvt_cfg",
     "build_optimizer",
     "build_scheduler",
     "evaluate",

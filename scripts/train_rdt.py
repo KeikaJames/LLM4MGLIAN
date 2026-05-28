@@ -42,6 +42,9 @@ from Model.training import (
     TrainState,
     apply_parallelism,
     build_dataloader,
+    build_image_processor,
+    build_omvt_cfg,
+    add_multimodal_args,
     build_optimizer,
     build_scheduler,
     init_distributed,
@@ -97,6 +100,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--smoke", action="store_true", help="run 4 in-memory steps")
     p.add_argument("--seed", type=int, default=42)
+    add_multimodal_args(p)
     return p.parse_args(argv)
 
 
@@ -239,6 +243,16 @@ def main(argv: list[str] | None = None) -> int:
         Path(train_cfg.output_dir).mkdir(parents=True, exist_ok=True)
 
     model = RDTForCausalLM(model_cfg).to(device)
+    omvt_cfg = build_omvt_cfg(args)
+    if omvt_cfg is not None:
+        # Pre-install a matching-size OMVT injector so the dispatcher
+        # does not lazily build a default-sized one on first forward
+        # (which would mismatch the dataloader's pixel geometry).
+        from Model.omvt import OMVTInjector
+
+        model.vision._omvt_cfg = omvt_cfg
+        model.vision.omvt = OMVTInjector(model_cfg, omvt_cfg).to(device)
+
     optimizer = build_optimizer(model, train_cfg)
     scheduler = build_scheduler(optimizer, train_cfg)
 
@@ -257,6 +271,8 @@ def main(argv: list[str] | None = None) -> int:
             world_size=world_size,
             rank=rank,
             pad_id=PAD_ID,
+            image_processor=build_image_processor(args),
+            omvt_cfg=omvt_cfg,
         )
         batch_iter = iter(dataloader)
 

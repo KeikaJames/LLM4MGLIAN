@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from Tokenizer.unified.bundle import TokenizerBundle
@@ -51,6 +51,17 @@ class EncodedSample:
     morph_depth: list[int]
     modality_spans: dict
     metadata: dict
+    # Multimodal payload references (paths / URLs / dicts) — opaque to the
+    # text tokenizer. The downstream collator + image processor consume
+    # them to produce pixel batches; absent / empty for text-only rows.
+    images: list[Any] = field(default_factory=list)
+    image_sizes: list[Any] = field(default_factory=list)
+    videos: list[Any] = field(default_factory=list)
+    video_sizes: list[Any] = field(default_factory=list)
+    # Optional OCR / layout supervision labels (one per <image>) used by
+    # ``train_omvt_ssl`` when present; absent ⇒ those SSL losses skipped.
+    ocr_labels: list[list[int]] = field(default_factory=list)
+    reading_order: list[list[int]] = field(default_factory=list)
 
 
 class PretrainingDataBuilder:
@@ -111,6 +122,12 @@ class PretrainingDataBuilder:
                     "video_token_spans": result.video_token_spans,
                 },
                 self._metadata(obj),
+                images=list(obj.get("images") or []),
+                image_sizes=list(obj.get("image_sizes") or []),
+                videos=list(obj.get("videos") or []),
+                video_sizes=list(obj.get("video_sizes") or []),
+                ocr_labels=list(obj.get("ocr_labels") or []),
+                reading_order=list(obj.get("reading_order") or []),
             )
             return self._truncate(sample)
         return self.encode_text(text, metadata=self._metadata(obj))
@@ -125,6 +142,13 @@ class PretrainingDataBuilder:
         tokens: list[EncodedToken],
         modality_spans: dict,
         metadata: dict,
+        *,
+        images: list[Any] | None = None,
+        image_sizes: list[Any] | None = None,
+        videos: list[Any] | None = None,
+        video_sizes: list[Any] | None = None,
+        ocr_labels: list[list[int]] | None = None,
+        reading_order: list[list[int]] | None = None,
     ) -> EncodedSample:
         word_pos, morph_depth = derive_morph_info_from_tokens(tokens)
         return EncodedSample(
@@ -143,6 +167,12 @@ class PretrainingDataBuilder:
                 ],
             },
             metadata=dict(metadata),
+            images=list(images or []),
+            image_sizes=list(image_sizes or []),
+            videos=list(videos or []),
+            video_sizes=list(video_sizes or []),
+            ocr_labels=[list(item) for item in (ocr_labels or [])],
+            reading_order=[list(item) for item in (reading_order or [])],
         )
 
     def _build_labels(
@@ -177,6 +207,12 @@ class PretrainingDataBuilder:
             morph_depth=sample.morph_depth[:cutoff],
             modality_spans=modality_spans,
             metadata=metadata,
+            images=list(sample.images),
+            image_sizes=list(sample.image_sizes),
+            videos=list(sample.videos),
+            video_sizes=list(sample.video_sizes),
+            ocr_labels=[list(item) for item in sample.ocr_labels],
+            reading_order=[list(item) for item in sample.reading_order],
         )
 
     def _metadata(self, obj: dict) -> dict:

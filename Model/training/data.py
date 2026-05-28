@@ -135,6 +135,13 @@ class PretrainingCollator:
     pad_to_multiple_of: int | None = None
     include_metadata: bool = False
     max_seq_len: int | None = None
+    # Multimodal: when both ``image_processor`` and ``omvt_cfg`` are set,
+    # rows that carry an ``images`` field are turned into a stacked OMVT
+    # multi-scale ``pixel_values`` batch dict. Rows without images still
+    # work — they just emit no pixel batch. We require **either** every
+    # row to have images **or** none, to keep the batch shape uniform.
+    image_processor: Any = None
+    omvt_cfg: Any = None
 
     def __call__(self, rows: Sequence[Any]) -> dict[str, Any]:
         if not rows:
@@ -175,7 +182,51 @@ class PretrainingCollator:
             tensors["modality_spans"] = [
                 row.get("modality_spans", {}) for row in normalized
             ]
+
+        pixel_values = self._build_pixel_batch(normalized)
+        if pixel_values is not None:
+            tensors["pixel_values"] = pixel_values
+
+        # Pass-through optional SSL labels (one list per row, ragged).
+        if any(row.get("ocr_labels") for row in normalized):
+            tensors["ocr_labels"] = [row.get("ocr_labels", []) for row in normalized]
+        if any(row.get("reading_order") for row in normalized):
+            tensors["reading_order"] = [
+                row.get("reading_order", []) for row in normalized
+            ]
         return tensors
+
+    def _build_pixel_batch(self, normalized: list[dict[str, Any]]) -> Any:
+        if self.image_processor is None or self.omvt_cfg is None:
+            return None
+        # Current OMVT injector assumes exactly **one image per row**: it
+        # treats the leading axis of every pixel tensor as the text-batch
+        # axis and replaces ``<image_patch>`` slots from a contiguous
+        # ``[B, compress_to, D]`` feature block. Multi-image-per-row would
+        # require either reshaping features back to ``[B, N*compress_to,
+        # D]`` *and* a matching N*compress_to <image_patch> count, or a
+        # bucketed dataloader. Neither is wired yet — we reject the batch
+        # explicitly rather than producing a silently-misaligned forward.
+        per_row_images = [list(row.get("images") or []) for row in normalized]
+        n_images_per_row = {len(items) for items in per_row_images}
+        if n_images_per_row == {0}:
+            return None
+        if n_images_per_row != {1}:
+            raise ValueError(
+                "PretrainingCollator currently supports exactly one image per row "
+                f"(got {sorted(n_images_per_row)}). Split mixed-cardinality data via "
+                "bucketed dataloaders, or extend _build_pixel_batch + VisionInjector "
+                "to handle N>1 images per row."
+            )
+        flat = [row_items[0] for row_items in per_row_images]
+        images = self.image_processor(flat)
+        # images: [B, C, H, W]. OMVT will turn each row into compress_to
+        # visual tokens and the injector replaces the row's
+        # <image_patch> slots one-for-one. Lazy import keeps the
+        # Tokenizer → Model edge cold for text-only setups.
+        from Model.omvt.patcher import collate_omvt_batch
+
+        return dict(collate_omvt_batch(images, self.omvt_cfg))
 
 
 def _normalize_row(row: Any, *, max_seq_len: int | None) -> dict[str, Any]:
@@ -216,6 +267,14 @@ def _normalize_row(row: Any, *, max_seq_len: int | None) -> dict[str, Any]:
     if max_seq_len is not None and n > max_seq_len:
         for key in ("input_ids", "attention_mask", "labels", "word_pos", "morph_depth"):
             out[key] = out[key][:max_seq_len]
+
+    # Multimodal pass-through fields (opaque to the text-side normalizer).
+    for key in ("images", "image_sizes", "videos", "video_sizes"):
+        if row.get(key):
+            out[key] = list(row[key])
+    for key in ("ocr_labels", "reading_order"):
+        if row.get(key):
+            out[key] = [list(item) for item in row[key]]
     return out
 
 
@@ -244,8 +303,16 @@ def build_dataloader(
     pad_id: int = PAD_ID,
     ignore_index: int = IGNORE_INDEX,
     infinite: bool = True,
+    image_processor: Any = None,
+    omvt_cfg: Any = None,
 ) -> DataLoader:
-    """Construct a rank-aware streaming dataloader."""
+    """Construct a rank-aware streaming dataloader.
+
+    Pass ``image_processor`` + ``omvt_cfg`` together to enable the
+    multimodal path: rows that carry an ``images`` column will be turned
+    into a stacked OMVT multi-scale ``pixel_values`` batch dict that the
+    model's ``VisionInjector`` consumes directly.
+    """
 
     paths = _resolve_shards(spec)
     if not paths:
@@ -265,6 +332,8 @@ def build_dataloader(
         ignore_index=ignore_index,
         pad_to_multiple_of=None,
         max_seq_len=cfg.seq_len,
+        image_processor=image_processor,
+        omvt_cfg=omvt_cfg,
     )
 
     return DataLoader(
