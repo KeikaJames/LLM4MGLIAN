@@ -172,8 +172,50 @@ def _smoke_batches(model_cfg: RDTConfig, train_cfg: TrainingConfig):
         yield collator([row] * train_cfg.micro_batch_size)
 
 
+def _validate_args(args: argparse.Namespace) -> int:
+    """Argument-level validation.
+
+    Runs **before** any expensive setup (distributed init, model alloc,
+    output-dir creation) so misconfigured invocations fail fast with a
+    clear stderr message and a non-zero exit code, instead of OOMing
+    halfway through model construction or leaving stale ``outputs/`` dirs.
+    Returns 0 on success, a non-zero code on failure.
+    """
+
+    if not args.smoke and not args.data:
+        print(
+            "scripts/train_rdt: --data is required for non-smoke runs; "
+            "pass --smoke to run on synthetic tokens explicitly.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.resume and not Path(args.resume).exists():
+        print(
+            f"scripts/train_rdt: --resume path does not exist: {args.resume}",
+            file=sys.stderr,
+        )
+        return 2
+    # Resolve the data spec **here** rather than waiting for build_dataloader
+    # so an empty glob (typo'd shard pattern) fails *before* we allocate a
+    # multi-billion-parameter model and initialize the process group.
+    if not args.smoke and args.data:
+        from Model.training.data import _resolve_shards
+
+        shards = _resolve_shards(args.data)
+        if not shards:
+            print(
+                f"scripts/train_rdt: --data resolved zero shards: {args.data!r}",
+                file=sys.stderr,
+            )
+            return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    rc = _validate_args(args)
+    if rc != 0:
+        return rc
     model_cfg_preview = _build_model_cfg(args)
     train_cfg_preview = _build_train_cfg(args, model_cfg_preview)
     rank, world_size, local_rank = init_distributed(backend=train_cfg_preview.dist_backend)
@@ -206,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     if train_cfg.resume:
         state.step = resume_state(train_cfg.resume, model, optimizer, scheduler)
 
-    if args.smoke or not train_cfg.train_data:
+    if args.smoke:
         batch_iter = _smoke_batches(model_cfg, train_cfg)
     else:
         dataloader = build_dataloader(
@@ -233,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                 device=device,
                 target_recurrent_steps=model_cfg.recurrent_steps,
             )
-            tokens_window += int(metrics["tokens"]) * train_cfg.grad_accum_steps
+            tokens_window += int(metrics["tokens"])
 
             if state.step % train_cfg.log_every == 0 or args.smoke:
                 dt = max(1e-6, time.time() - t0)
