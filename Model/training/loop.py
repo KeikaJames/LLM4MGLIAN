@@ -161,11 +161,20 @@ def train_one_step(
         grad_norm_val = float("nan")
 
     if scaler is not None:
+        # GradScaler.step() may SKIP the underlying optimizer update when the
+        # unscaled grads contain inf/NaN. An overflow step lowers the dynamic
+        # scale on update(); a real step keeps or grows it. Only advance the LR
+        # scheduler when the optimizer actually stepped, so fp16 overflow steps
+        # don't silently consume warmup/decay slots and desync the schedule.
+        scale_before = scaler.get_scale()
         scaler.step(optimizer)
         scaler.update()
+        stepped = scaler.get_scale() >= scale_before
     else:
         optimizer.step()
-    scheduler.step()
+        stepped = True
+    if stepped:
+        scheduler.step()
 
     if loss_terms:
         # One host-sync per optimizer step instead of per micro-step.
@@ -201,6 +210,10 @@ def evaluate(
     for batch in batches:
         if seen >= max_batches:
             break
+        # Count every consumed batch toward the limit *before* any skip so an
+        # infinite streaming dataloader yielding all-ignore rows can't spin
+        # forever — ``max_batches`` must bound batches read, not just averaged.
+        seen += 1
         batch = _to_device(batch, device)
         with _autocast_ctx(cfg.precision, device_type):
             out = model(
@@ -223,7 +236,6 @@ def evaluate(
             continue
         total_loss += float(out["loss"].item()) * n_targets
         total_targets += n_targets
-        seen += 1
     avg = total_loss / max(1, total_targets)
     return {"eval_loss": avg, "eval_tokens": float(total_targets)}
 
