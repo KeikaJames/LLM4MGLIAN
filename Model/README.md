@@ -268,3 +268,131 @@ mismatches: a missing parameter raises with an "upgrade `mamba-ssm`"
 hint. Production configs (`small_config`, `base_config`,
 `pretrain_config`) all set `use_official_mamba=True`. The CPU-only smoke
 configs and tests use the `NaiveSSM` fallback explicitly.
+
+## 9. GPU 集群预训练验证清单
+
+These checks must run on the CUDA cluster before the ~1.1B `pretrain_config`
+run; the local macOS/CPU box cannot validate them.
+
+Set `DATA_GLOB` to the real pretraining shard glob before running the commands
+below, e.g. `export DATA_GLOB="data/pretrain/*.jsonl"`.
+
+- [ ] **官方 Mamba** — install CUDA Mamba and prove production configs build
+  the upstream backend, not `NaiveSSM`:
+  ```bash
+  pip install 'mamba-ssm>=2.2'
+  python - <<'PY'
+  from Model.config import small_config, base_config, pretrain_config
+  from Model.layers.mamba3_layer import Mamba3Layer, official_available
+  assert official_available(), 'mamba_ssm.modules.mamba3.Mamba3 not importable'
+  for make in (small_config, base_config, pretrain_config):
+      cfg = make()
+      assert cfg.use_official_mamba is True
+      layer = Mamba3Layer(cfg, layer_idx=0).cuda()
+      assert layer.backend == 'official', layer.backend
+      assert layer.mamba.__class__.__name__ == 'Mamba3'
+      print(make.__name__, layer.backend)
+  PY
+  ```
+  If constructor mismatch fails in `Mamba3Layer._build_official`, stop and
+  upgrade `mamba-ssm`; do not fall back for `small` / `base` / `pretrain`.
+
+- [ ] **FSDP + bf16 + nccl** — run a multi-GPU smoke with the exact distributed
+  mode, then inspect that FSDP keeps `use_orig_params=True` and wraps
+  `{StandardBlock, RecurrentBlock, AttnSubLayer, MambaSubLayer}`:
+  ```bash
+  torchrun --standalone --nproc_per_node=2 scripts/train_rdt.py \
+      --config tiny --smoke --dist fsdp --precision bf16 --dist-backend nccl \
+      --output runs/phase_f_fsdp_smoke
+  python - <<'PY'
+  import inspect
+  from Model.training.dist import wrap_fsdp, _transformer_block_classes
+  src = inspect.getsource(wrap_fsdp)
+  assert 'use_orig_params=True' in src
+  print(sorted(cls.__name__ for cls in _transformer_block_classes()))
+  PY
+  ```
+
+- [ ] **optimizer 构建顺序 (M6)** — verify optimizer state remains valid across
+  pre-wrap build → `apply_parallelism` because FSDP uses `use_orig_params=True`:
+  ```bash
+  torchrun --standalone --nproc_per_node=2 scripts/train_rdt.py \
+      --config tiny --smoke --dist fsdp --precision bf16 --dist-backend nccl \
+      --output runs/phase_f_optimizer_order
+  ```
+  If `use_orig_params` ever changes to `False`, rebuild the optimizer and
+  scheduler after `apply_parallelism` in `scripts/train_rdt.py`.
+
+- [ ] **recurrent steps** — confirm distributed runs execute the full scheduled
+  recurrent bound (`pretrain_config().recurrent_steps == 8`), not one collapsed
+  shard:
+  ```bash
+  mkdir -p runs
+  cat > runs/phase_f_recurrent_check.py <<'PY'
+  import torch
+  from Model.config import TrainingConfig, pretrain_config
+  from Model.model import RDTForCausalLM
+  from Model.training.dist import apply_parallelism, init_distributed
+
+  rank, world_size, local_rank = init_distributed('nccl')
+  assert world_size > 1
+  device = torch.device(f'cuda:{local_rank}')
+  cfg = pretrain_config()
+  model = RDTForCausalLM(cfg).to(device).train()
+  model = apply_parallelism(model, TrainingConfig(parallel='fsdp'), local_rank)
+  x = torch.randint(300, 320, (1, 16), device=device)
+  out = model(x, labels=x, steps=cfg.recurrent_steps, bptt_window=4)
+  assert out['rec_info']['steps_used'] == cfg.recurrent_steps
+  if rank == 0:
+      print('steps_used', out['rec_info']['steps_used'])
+  PY
+  torchrun --standalone --nproc_per_node=2 runs/phase_f_recurrent_check.py
+  ```
+
+- [ ] **VRAM / throughput 基线** — record max VRAM and tokens/sec for
+  `bptt_window` values such as `2`, `4`, `8` across three tiers:
+  - full checkpoint: `grad_ckpt_recurrent=True`, `grad_ckpt_prelude_coda=True`
+  - partial checkpoint: `grad_ckpt_recurrent=True`, `grad_ckpt_prelude_coda=False`
+  - none: `grad_ckpt_recurrent=False`, `grad_ckpt_prelude_coda=False`
+  ```bash
+  for tier in full partial none; do
+    case "$tier" in
+      full)    rec=on;  pc=on  ;;
+      partial) rec=on;  pc=off ;;
+      none)    rec=off; pc=off ;;
+    esac
+    for bptt in 2 4 8; do
+      torchrun --standalone --nproc_per_node=8 scripts/train_rdt.py \
+        --config pretrain --dist fsdp --precision bf16 --dist-backend nccl \
+        --grad-ckpt-recurrent $rec --grad-ckpt-prelude-coda $pc \
+        --bptt-window $bptt --max-steps 20 --save-every 0 \
+        --data "$DATA_GLOB" --output "runs/bench_${tier}_${bptt}"
+    done
+  done
+  ```
+  Track `RDTConfig.grad_ckpt_recurrent`, `RDTConfig.grad_ckpt_blocks`,
+  `RDTConfig.grad_ckpt_prelude_coda`, and `TrainingConfig.bptt_window`
+  (`--bptt-window`). If a branch exposes `use_activation_checkpointing`, include
+  it in the matrix; current `RDTConfig` does not define that field.
+
+- [ ] **多卡 checkpoint save/resume e2e** — verify FSDP save → resume is stable
+  after the M1 RNG fix (`rng.pt` saves Python, NumPy, torch CPU, and CUDA RNG;
+  shuffle seeding uses seed + rank + worker, not `os.getpid()`):
+  ```bash
+  torchrun --standalone --nproc_per_node=2 scripts/train_rdt.py \
+      --config tiny --dist fsdp --precision bf16 --dist-backend nccl \
+      --data "$DATA_GLOB" --max-steps 6 --save-every 3 \
+      --output runs/phase_f_resume
+  torchrun --standalone --nproc_per_node=2 scripts/train_rdt.py \
+      --config tiny --dist fsdp --precision bf16 --dist-backend nccl \
+      --data "$DATA_GLOB" --max-steps 8 --save-every 3 \
+      --resume runs/phase_f_resume/latest --output runs/phase_f_resume
+  python - <<'PY'
+  import torch
+  rng = torch.load('runs/phase_f_resume/latest/rng.pt', map_location='cpu', weights_only=False)
+  assert {'python', 'numpy', 'cpu', 'cuda'} <= set(rng)
+  print(sorted(rng))
+  PY
+  ```
+  Be aware: `StreamingJsonlDataset` shard/file position is not checkpointed;
+  resume restores RNG state but restarts the streaming data iterator.
