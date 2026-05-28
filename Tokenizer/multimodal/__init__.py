@@ -34,6 +34,7 @@ from .video_placeholders import (
     video_placeholder_tokens,
 )
 from .bbox import decode_bbox_tokens, encode_bbox_tokens, normalize_bbox
+from .image_io import PILImageProcessor
 from .processor import MultimodalEncoding, MultimodalProcessor
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     "OCR_END",
     "OCR_START",
     "OCR_TOKEN",
+    "PILImageProcessor",
     "TABLE_TOKEN",
     "VIDEO_END",
     "VIDEO_PATCH",

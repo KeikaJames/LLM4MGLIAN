@@ -25,4 +25,7 @@ python3 -m scripts.train_omvt_ssl --smoke --steps 3 --output "$OUT/omvt_ssl"
 
 echo "==> [5/5] OMVT → RDT end-to-end already covered by VLM align step above."
 
+echo "==> [6/6] multimodal end-to-end (PIL images → JSONL → trainers)"
+OUT="$OUT/mm" bash "$ROOT/scripts/smoke_multimodal.sh"
+
 echo "All smoke runs OK."
