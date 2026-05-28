@@ -14,6 +14,7 @@ import argparse
 from typing import Any
 
 from Model.config import OMVTConfig
+from Tokenizer.multimodal.image_placeholders import image_patch_count
 
 
 def add_multimodal_args(p: argparse.ArgumentParser, *, default_image_size: int = 56) -> None:
@@ -33,8 +34,8 @@ def add_multimodal_args(p: argparse.ArgumentParser, *, default_image_size: int =
     p.add_argument(
         "--n-image-tokens",
         type=int,
-        default=8,
-        help="OMVT compress_to: number of <image_patch> slots per image",
+        default=None,
+        help="OMVT compress_to; defaults to patch count implied by --image-size",
     )
     p.add_argument(
         "--d-vision",
@@ -73,6 +74,9 @@ def build_omvt_cfg(args: argparse.Namespace) -> OMVTConfig | None:
     s = args.image_size
     if s <= 0 or s % 4 != 0:
         raise ValueError(f"--image-size must be a positive multiple of 4, got {s}")
+    n_image_tokens = args.n_image_tokens
+    if n_image_tokens is None:
+        n_image_tokens = image_patch_count(s, s)
     return OMVTConfig(
         image_size=s,
         d_vision=args.d_vision,
@@ -80,7 +84,7 @@ def build_omvt_cfg(args: argparse.Namespace) -> OMVTConfig | None:
         horizontal_patch=(s // 4, s // 2),
         square_patch=(s // 4, s // 4),
         layout_patch=(s, s),
-        compress_to=args.n_image_tokens,
+        compress_to=n_image_tokens,
     )
 
 

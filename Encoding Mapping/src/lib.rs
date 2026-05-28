@@ -93,7 +93,11 @@ pub fn convert_menksoft_to_unicode(input: &str) -> String {
 
         if menksoft::is_space(codepoint) {
             word.push(codepoint);
-        } else {
+        } else if !mongol::is_zero_width_noise(codepoint) {
+            // Mirror `clean_mw_unicode`: drop transport/control zero-width
+            // noise (U+200B/200C/200D/2060/FEFF) so mixed Menksoft+Unicode
+            // input is cleaned the same way pure-Unicode input is. FVS is
+            // preserved (it carries glyph-shaping meaning).
             output.push(normalize_non_menksoft_codepoint(codepoint));
         }
     }
@@ -283,6 +287,17 @@ mod tests {
                 "\u{FEFF}\u{182A}\u{200B}\u{1820}\u{200C}\u{182D}\u{200D}\u{1830}\u{2060}\u{1822}"
             ),
             "\u{182A}\u{1820}\u{182D}\u{1830}\u{1822}"
+        );
+    }
+
+    #[test]
+    fn cleans_zero_width_noise_in_menksoft_pipeline() {
+        // Regression: the Menksoft/mixed conversion path must strip the same
+        // transport zero-width noise (U+FEFF/200B/200C/200D/2060) that the
+        // pure-Unicode path drops, instead of leaking it into the output.
+        assert_eq!(
+            normalize_to_unicode("\u{FEFF}\u{E2C1}\u{E27F}\u{E317}\u{E27E}\u{E2E8}\u{2060}"),
+            "\u{182A}\u{1822}\u{1834}\u{1822}\u{182D}"
         );
     }
 

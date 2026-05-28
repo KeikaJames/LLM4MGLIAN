@@ -38,7 +38,10 @@ def normalize(text: str, nominal: bool = False) -> str:
         args,
         cwd=str(crate),
         input=text,
-        text=True,
+        # Force UTF-8 for the Mongolian payload instead of relying on the host
+        # locale (which may be C/POSIX in CI/containers and would mojibake or
+        # raise). ``encoding`` implies text mode.
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )
@@ -76,14 +79,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    text = (
-        Path(args.input).read_text(encoding="utf-8") if args.input else sys.stdin.read()
-    )
+    if args.input:
+        text = Path(args.input).read_text(encoding="utf-8")
+    else:
+        # Decode stdin as UTF-8 explicitly rather than via the host locale.
+        text = sys.stdin.buffer.read().decode("utf-8")
     out = normalize(text, nominal=args.nominal)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")
     else:
-        sys.stdout.write(out)
+        sys.stdout.buffer.write(out.encode("utf-8"))
 
 
 if __name__ == "__main__":

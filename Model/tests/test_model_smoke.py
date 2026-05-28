@@ -261,6 +261,20 @@ class ModelSmokeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "batch size is 1"):
             inject_visual_features(inputs, input_ids, features, cfg.image_patch_id)
 
+    def test_batched_visual_features_must_match_patch_slots_exactly(self):
+        cfg = test_config()
+        inputs = torch.zeros(2, 4, cfg.d_model)
+        input_ids = torch.tensor(
+            [
+                [cfg.bos_id, cfg.image_patch_id, cfg.image_patch_id, cfg.eos_id],
+                [cfg.bos_id, 300, cfg.image_patch_id, cfg.eos_id],
+            ]
+        )
+        features = torch.randn(2, 2, cfg.d_model)
+
+        with self.assertRaisesRegex(ValueError, "must equal image_patch count"):
+            inject_visual_features(inputs, input_ids, features, cfg.image_patch_id)
+
     def test_config_rejects_invalid_dropout(self):
         with self.assertRaisesRegex(ValueError, "dropout"):
             RDTConfig(dropout=1.0)

@@ -158,5 +158,55 @@ class OMVTIntoRDTSmokeTest(unittest.TestCase):
         out["loss"].backward()
 
 
+class MaskedPatchLearnsRealPixelsTest(unittest.TestCase):
+    """Regression: the masked-patch SSL task must reconstruct *real* pixels.
+
+    A prior version regressed the head onto ``torch.randn_like`` targets, so
+    the objective was to predict independent noise — unlearnable, zero useful
+    signal. Here we overfit a fixed low-frequency image and assert the
+    masked-patch loss drops substantially, which is only possible when the
+    target is the genuine (predictable) patch content.
+    """
+
+    def test_masked_patch_loss_decreases_on_fixed_image(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from scripts.train_omvt_ssl import _masked_patch_step
+
+        torch.manual_seed(0)
+        cfg = _tiny_omvt()
+        tower = OMVTVisionTower(cfg)
+        mp_head = MaskedPatchHead(
+            cfg.d_vision,
+            patch_pixels=cfg.square_patch[0] * cfg.square_patch[1] * cfg.in_channels,
+        )
+
+        # Smooth gradient image: neighbouring patches are highly predictive,
+        # so a working reconstruction objective drives the loss down fast.
+        ramp = torch.linspace(0, 1, 56)
+        img = (ramp.view(1, 1, 1, 56) + ramp.view(1, 1, 56, 1)) / 2.0
+        images = img.expand(2, 3, 56, 56).contiguous()
+
+        params = list(tower.parameters()) + list(mp_head.parameters())
+        opt = torch.optim.Adam(params, lr=1e-3)
+
+        torch.manual_seed(1234)
+        first = None
+        last = None
+        for step in range(120):
+            loss = _masked_patch_step(tower, mp_head, images, cfg)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            if step == 0:
+                first = float(loss.detach())
+            last = float(loss.detach())
+
+        self.assertIsNotNone(first)
+        self.assertTrue(last < 0.5 * first, f"masked-patch loss did not learn: {first} -> {last}")
+
+
 if __name__ == "__main__":
     unittest.main()

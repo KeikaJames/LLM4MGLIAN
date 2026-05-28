@@ -34,7 +34,11 @@ def encode_byte_fallback(
             tokens.append(EncodedToken(direct, ch, track, start, end))
             continue
 
-        for byte in ch.encode("utf-8"):
+        # ``surrogatepass`` keeps encoding from raising on lone surrogates
+        # (U+D800–U+DFFF), which appear in scraped/raw web text. A strict
+        # ``encode`` would raise UnicodeEncodeError and abort the whole shard;
+        # decode mirrors this with ``errors="replace"``.
+        for byte in ch.encode("utf-8", "surrogatepass"):
             tok = byte_token(byte)
             tokens.append(EncodedToken(vocab.get(tok, unk_id), tok, track, start, end))
     return tokens

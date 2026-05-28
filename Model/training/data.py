@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import glob
 import json
-import os
 import random
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -95,7 +94,13 @@ class StreamingJsonlDataset(IterableDataset):
         if not files:
             return
 
-        rng = random.Random(self.seed + 1000 * self.rank + os.getpid())
+        # Seed the shuffle from (base seed, rank, worker) only — NOT os.getpid().
+        # The PID made the shuffle order non-reproducible across runs/processes
+        # (breaking resumable/deterministic training); rank+worker already
+        # decorrelate the per-shard buffer order deterministically.
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
+        rng = random.Random(self.seed + 1000 * self.rank + worker_id)
         buffer: list[dict[str, Any]] = []
 
         def _emit(item: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -111,21 +116,31 @@ class StreamingJsonlDataset(IterableDataset):
         first_pass = True
         while first_pass or self.infinite:
             first_pass = False
+            rows_seen = 0
             for path in files:
                 with path.open("r", encoding="utf-8") as f:
-                    for line in f:
+                    for line_no, line in enumerate(f, start=1):
                         line = line.rstrip("\n")
                         if not line:
                             continue
                         try:
                             row = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
+                        except json.JSONDecodeError as exc:
+                            raise ValueError(
+                                f"invalid JSON in shard {path}:{line_no}: {exc}"
+                            ) from exc
+                        rows_seen += 1
                         yield from _emit(row)
 
-        rng.shuffle(buffer)
-        for item in buffer:
-            yield item
+            if rows_seen == 0:
+                raise ValueError(
+                    f"no JSONL rows available for rank={self.rank} from "
+                    f"{[str(path) for path in files]}"
+                )
+
+            rng.shuffle(buffer)
+            while buffer:
+                yield buffer.pop()
 
 
 @dataclass
@@ -265,6 +280,20 @@ def _normalize_row(row: Any, *, max_seq_len: int | None) -> dict[str, Any]:
         raise ValueError("word_pos and morph_depth must align with input_ids")
 
     if max_seq_len is not None and n > max_seq_len:
+        # Multimodal rows carry a fixed number of ``<image_patch>`` slots that
+        # must stay one-for-one with the ``images`` payload (the OMVT injector
+        # asserts this at forward). Blindly slicing ``input_ids`` here could
+        # drop image-patch slots while the ``images`` list stays intact,
+        # producing a silently-misaligned batch. Refuse loudly instead and tell
+        # the operator to size ``seq_len`` to the builder's max length.
+        if row.get("images") or row.get("videos"):
+            raise ValueError(
+                "multimodal row length "
+                f"({n}) exceeds seq_len ({max_seq_len}); model-side truncation "
+                "is not span-aware and would desync <image_patch> slots from the "
+                "image payload. Set TrainingConfig.seq_len >= the builder's "
+                "max_length so multimodal rows are not truncated."
+            )
         for key in ("input_ids", "attention_mask", "labels", "word_pos", "morph_depth"):
             out[key] = out[key][:max_seq_len]
 

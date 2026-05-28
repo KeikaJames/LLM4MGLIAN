@@ -152,6 +152,17 @@ class ByteFallbackTests(unittest.TestCase):
             self.assertLessEqual(t.start, t.end)
             last = t.start
 
+    def test_lone_surrogate_does_not_crash(self):
+        # Regression: scraped text can contain lone surrogates (U+D800–U+DFFF).
+        # Strict ``str.encode("utf-8")`` raises UnicodeEncodeError and would
+        # abort the whole shard; surrogatepass must keep encoding going.
+        vocab = {f"<0x{i:02X}>": 1000 + i for i in range(256)}
+        vocab["<unk>"] = 0
+        tokens = encode_byte_fallback("a\ud800b", vocab, unk_id=0)
+        self.assertTrue(any(is_byte_token(t.token) for t in tokens))
+        # 'a' + 3 surrogate bytes + 'b' worth of byte tokens, all finite ids.
+        self.assertTrue(all(isinstance(t.id, int) for t in tokens))
+
 
 if __name__ == "__main__":
     unittest.main()

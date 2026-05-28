@@ -104,10 +104,10 @@ def inject_visual_features(
     counts = mask.sum(dim=1).tolist()
 
     for batch_idx, count in enumerate(counts):
-        if visual_features.shape[1] < count:
+        if visual_features.shape[1] != count:
             raise ValueError(
-                f"batch {batch_idx}: visual feature count {visual_features.shape[1]} "
-                f"is smaller than image_patch count {count}"
+                f"batch {batch_idx}: visual feature count must equal image_patch "
+                f"count (got {visual_features.shape[1]} vs {count})"
             )
 
         if count > 0:

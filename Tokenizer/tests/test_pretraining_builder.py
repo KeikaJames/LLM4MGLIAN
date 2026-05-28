@@ -91,6 +91,22 @@ class PretrainingBuilderTest(unittest.TestCase):
         self.assertEqual(sample.metadata["type"], "ocr")
         self.assertEqual(sample.metadata["ocr"][0]["text"], "hello")
 
+    def test_flat_ocr_labels_are_normalized_for_single_image_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            builder = PretrainingDataBuilder(build_smoke_bundle(tmp), max_length=128)
+            sample = builder.encode_json_obj(
+                {
+                    "type": "ocr",
+                    "text": "<image> text",
+                    "images": ["x.jpg"],
+                    "image_sizes": [[14, 14]],
+                    "ocr_labels": [1, 2, 3],
+                    "reading_order": [0, 1, 2],
+                }
+            )
+        self.assertEqual(sample.ocr_labels, [[1, 2, 3]])
+        self.assertEqual(sample.reading_order, [[0, 1, 2]])
+
     def test_structural_special_labels_are_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             builder = PretrainingDataBuilder(build_smoke_bundle(tmp), max_length=128)
@@ -124,6 +140,8 @@ class PretrainingBuilderTest(unittest.TestCase):
             )
         self.assertLessEqual(len(sample.input_ids), 3)
         self.assertEqual(sample.modality_spans["image_token_spans"], [])
+        self.assertEqual(sample.images, [])
+        self.assertEqual(sample.image_sizes, [])
         self.assertTrue(sample.metadata["truncated"])
 
     def test_pack_samples_for_text_only(self):
