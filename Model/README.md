@@ -130,6 +130,10 @@ smoke runs, reuse `Tokenizer.tests.test_pretraining_builder.build_smoke_bundle`.
 of raw `.txt` / `.jsonl` files; it emits sharded `<name>.jsonl` rows with
 `input_ids / attention_mask / labels / word_pos / morph_depth`.
 
+> 文本预训练 JSON 的完整字段级规范（原始输入与编码后分片的各种文本格式、
+> 必填/可选字段、`labels` 的 `-100` 语义、长度与同批约束）见
+> [`Tokenizer/docs/pretraining_text_format.md`](../Tokenizer/docs/pretraining_text_format.md)。
+
 **Multimodal:** two-stage flow.
 
 ```bash
