@@ -1,0 +1,203 @@
+# -*- coding: utf-8 -*-
+"""Extract normalized UTF-8 plaintext from the heterogeneous Daffodils sources.
+
+Each invocation handles one source and appends JSONL (``{"text": ...}``) lines
+to ``--output``:
+
+  # Traditional Mongolian (UTF-16 .txt, recursive)
+  python -m Tokenizer.tools.prepare_corpus --source mongolian \
+      --input "1000 traditional_mongolian_corpus(DO NOT GIT IT)" --output mn.jsonl
+
+  # CHINESE bundle (人民日报 / 问答 / Journal / Tsinghua)
+  python -m Tokenizer.tools.prepare_corpus --source chinese \
+      --input "CHINESE(DO NOT GIT IT)" --output zh_en.jsonl
+
+  # Wikipedia via HF datasets (streaming, sampled)
+  python -m Tokenizer.tools.prepare_corpus --source wiki \
+      --lang ja --limit 20000 --output ja.jsonl
+
+The output feeds ``build_morphbpe`` (Mongolian) and ``build_general_bpe``
+(everything else), and later ``build_pretraining_data``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import unicodedata
+from typing import Iterable, Iterator
+
+_MIN_CHARS = 1
+
+
+def _clean(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("\ufeff", "")
+    text = unicodedata.normalize("NFC", text)
+    # Collapse stray control chars (keep tab/newline) so JSONL stays one-per-line.
+    text = "".join(
+        ch if (ch in "\t\n" or unicodedata.category(ch)[0] != "C") else " "
+        for ch in text
+    )
+    return text.replace("\n", " ").replace("\r", " ").strip()
+
+
+def _read_text_any(path: str) -> str:
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-16", "utf-16-le", "utf-8", "utf-8-sig"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _iter_mongolian(root: str) -> Iterator[str]:
+    for dirpath, _dirs, files in os.walk(root):
+        for name in sorted(files):
+            if not name.lower().endswith(".txt"):
+                continue
+            text = _clean(_read_text_any(os.path.join(dirpath, name)))
+            if len(text) >= _MIN_CHARS:
+                yield text
+
+
+def _iter_jsonl_fields(path: str, fields: tuple[str, ...]) -> Iterator[str]:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            for field in fields:
+                val = obj.get(field)
+                if val:
+                    text = _clean(str(val))
+                    if len(text) >= _MIN_CHARS:
+                        yield text
+
+
+def _iter_json_array(path: str, fields: tuple[str, ...]) -> Iterator[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+    if isinstance(data, dict):
+        data = data.get("data", []) or data.get("records", []) or []
+    if not isinstance(data, list):
+        return
+    for obj in data:
+        if not isinstance(obj, dict):
+            continue
+        for field in fields:
+            val = obj.get(field)
+            if val:
+                text = _clean(str(val))
+                if len(text) >= _MIN_CHARS:
+                    yield text
+
+
+def _iter_chinese(root: str) -> Iterator[str]:
+    renmin = os.path.join(root, "人民日报2023.json")
+    if os.path.exists(renmin):
+        yield from _iter_jsonl_fields(renmin, ("content", "title"))
+    qa = os.path.join(root, "问答语料300.json")
+    if os.path.exists(qa):
+        yield from _iter_jsonl_fields(qa, ("question", "answer"))
+    journal = os.path.join(root, "JournalArticle2013_2023")
+    if os.path.isdir(journal):
+        fields = (
+            "remark_c", "title_c", "keyword_c",
+            "remark_e", "title_e", "keyword_e",
+        )
+        for name in sorted(os.listdir(journal)):
+            if name.lower().endswith(".json"):
+                yield from _iter_json_array(os.path.join(journal, name), fields)
+    tsinghua = os.path.join(root, "TsinghuaBilingualCorpus")
+    if os.path.isdir(tsinghua):
+        for name in sorted(os.listdir(tsinghua)):
+            if not name.lower().endswith(".txt"):
+                continue
+            with open(
+                os.path.join(tsinghua, name), "r", encoding="utf-8", errors="replace"
+            ) as f:
+                for line in f:
+                    text = _clean(line)
+                    if len(text) >= _MIN_CHARS:
+                        yield text
+
+
+def _iter_wiki(lang: str, limit: int, date: str) -> Iterator[str]:
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise SystemExit(f"Missing dependency for --source wiki: {exc}") from exc
+    config = f"{date}.{lang}"
+    ds = load_dataset(
+        "wikimedia/wikipedia", config, split="train", streaming=True
+    )
+    count = 0
+    for row in ds:
+        text = _clean(str(row.get("text", "")))
+        if len(text) < _MIN_CHARS:
+            continue
+        yield text
+        count += 1
+        if limit and count >= limit:
+            break
+
+
+def _write(out_path: str, texts: Iterable[str], append: bool) -> int:
+    mode = "a" if append else "w"
+    written = 0
+    with open(out_path, mode, encoding="utf-8") as f:
+        for text in texts:
+            f.write(json.dumps({"text": text}, ensure_ascii=False))
+            f.write("\n")
+            written += 1
+    return written
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source", required=True, choices=["mongolian", "chinese", "wiki"]
+    )
+    parser.add_argument("--input", help="root dir/file for mongolian|chinese")
+    parser.add_argument("--output", required=True, help="output JSONL")
+    parser.add_argument("--lang", help="wiki language code (en/ja/zh/mn/...)")
+    parser.add_argument("--limit", type=int, default=20000, help="wiki doc cap")
+    parser.add_argument("--wiki-date", default="20231101", help="wiki snapshot")
+    parser.add_argument(
+        "--append", action="store_true", help="append instead of overwrite"
+    )
+    args = parser.parse_args()
+
+    if args.source == "mongolian":
+        if not args.input:
+            parser.error("--source mongolian requires --input")
+        texts = _iter_mongolian(args.input)
+    elif args.source == "chinese":
+        if not args.input:
+            parser.error("--source chinese requires --input")
+        texts = _iter_chinese(args.input)
+    else:
+        if not args.lang:
+            parser.error("--source wiki requires --lang")
+        texts = _iter_wiki(args.lang, args.limit, args.wiki_date)
+
+    written = _write(args.output, texts, args.append)
+    print(f"source={args.source} written={written} output={args.output}")
+
+
+if __name__ == "__main__":
+    main()

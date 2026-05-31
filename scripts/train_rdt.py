@@ -34,6 +34,8 @@ from Model.config import (
     pretrain_config,
     small_config,
     tiny_config,
+    two_stage_pretrain_config,
+    two_stage_tiny_config,
 )
 from Model.model import RDTForCausalLM
 from Model.training import (
@@ -61,6 +63,8 @@ CONFIG_CHOICES = {
     "small": small_config,
     "base": base_config,
     "pretrain": pretrain_config,
+    "two_stage_tiny": two_stage_tiny_config,
+    "two_stage_pretrain": two_stage_pretrain_config,
 }
 
 
