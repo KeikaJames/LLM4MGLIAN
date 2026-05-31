@@ -29,6 +29,7 @@ import unicodedata
 from typing import Iterable, Iterator
 
 _MIN_CHARS = 1
+_NULLISH = {"", "none", "null", "nan", "n/a"}
 
 
 def _clean(text: str) -> str:
@@ -41,7 +42,12 @@ def _clean(text: str) -> str:
         ch if (ch in "\t\n" or unicodedata.category(ch)[0] != "C") else " "
         for ch in text
     )
-    return text.replace("\n", " ").replace("\r", " ").strip()
+    text = text.replace("\n", " ").replace("\r", " ").strip()
+    # Heterogeneous dumps store missing fields as the literal string "None"/
+    # "null"; drop them so they do not pollute the BPE corpus.
+    if text.lower() in _NULLISH:
+        return ""
+    return text
 
 
 def _read_text_any(path: str) -> str:
