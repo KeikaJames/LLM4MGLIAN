@@ -12,7 +12,11 @@ to ``--output``:
   python -m Tokenizer.tools.prepare_corpus --source chinese \
       --input "CHINESE(DO NOT GIT IT)" --output zh_en.jsonl
 
-  # Wikipedia via HF datasets (streaming, sampled)
+  # Wikipedia from a local parquet dump (offline, e.g. fetched via hf-mirror)
+  python -m Tokenizer.tools.prepare_corpus --source wiki --lang ja \
+      --input "WIKIPEDIA(DO NOT GIT IT)" --output ja.jsonl
+
+  # Wikipedia via HF datasets (streaming, sampled) when no local dump exists
   python -m Tokenizer.tools.prepare_corpus --source wiki \
       --lang ja --limit 20000 --output ja.jsonl
 
@@ -23,6 +27,7 @@ The output feeds ``build_morphbpe`` (Mongolian) and ``build_general_bpe``
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import unicodedata
@@ -162,6 +167,39 @@ def _iter_wiki(lang: str, limit: int, date: str) -> Iterator[str]:
             break
 
 
+def _iter_wiki_local(root: str, lang: str, date: str, limit: int) -> Iterator[str]:
+    """Stream a locally-downloaded ``wikimedia/wikipedia`` parquet dump.
+
+    ``root`` is the directory that holds the ``{date}.{lang}/*.parquet`` shards
+    (e.g. a local snapshot fetched with ``hf-mirror``). Reading the parquet
+    directly avoids the (often throttled) ``datasets`` streaming path.
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise SystemExit(f"Missing dependency for --source wiki: {exc}") from exc
+
+    shard_dir = os.path.join(root, f"{date}.{lang}")
+    if not os.path.isdir(shard_dir):
+        shard_dir = root
+    shards = sorted(glob.glob(os.path.join(shard_dir, "*.parquet")))
+    if not shards:
+        raise SystemExit(f"No parquet shards found under {shard_dir!r}")
+
+    count = 0
+    for shard in shards:
+        pf = pq.ParquetFile(shard)
+        for batch in pf.iter_batches(batch_size=1000, columns=["text"]):
+            for value in batch.column("text"):
+                text = _clean(str(value.as_py() or ""))
+                if len(text) < _MIN_CHARS:
+                    continue
+                yield text
+                count += 1
+                if limit and count >= limit:
+                    return
+
+
 def _write(out_path: str, texts: Iterable[str], append: bool) -> int:
     mode = "a" if append else "w"
     written = 0
@@ -199,7 +237,12 @@ def main() -> None:
     else:
         if not args.lang:
             parser.error("--source wiki requires --lang")
-        texts = _iter_wiki(args.lang, args.limit, args.wiki_date)
+        if args.input:
+            texts = _iter_wiki_local(
+                args.input, args.lang, args.wiki_date, args.limit
+            )
+        else:
+            texts = _iter_wiki(args.lang, args.limit, args.wiki_date)
 
     written = _write(args.output, texts, args.append)
     print(f"source={args.source} written={written} output={args.output}")
