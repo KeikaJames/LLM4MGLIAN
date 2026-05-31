@@ -50,6 +50,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--repetition-penalty", type=float, default=1.0)
     p.add_argument("--greedy", action="store_true")
     p.add_argument(
+        "--use-cache",
+        action="store_true",
+        help=(
+            "Incremental KV/state decoding (core_type='two_stage' only); "
+            "bit-exact with the cache-free path but O(L) per step."
+        ),
+    )
+    p.add_argument(
         "--mamba",
         choices=["auto", "official", "naive"],
         default="auto",
@@ -98,6 +106,7 @@ def main(argv: list[str] | None = None) -> None:
         min_p=args.min_p,
         greedy=args.greedy,
         repetition_penalty=args.repetition_penalty,
+        use_cache=args.use_cache,
     )
 
     full = out[0].tolist()

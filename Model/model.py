@@ -61,6 +61,74 @@ class RDTForCausalLM(nn.Module):
             if self.reverse_head is not None:
                 self.reverse_head.weight = self.embed.weight
 
+    def _forward_decode(
+        self,
+        input_ids: torch.Tensor,
+        word_pos: torch.Tensor,
+        morph_depth: torch.Tensor,
+        cache,
+        pixel_values: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Incremental forward over the new tokens ``input_ids`` (``[B, m]``).
+
+        ``word_pos`` / ``morph_depth`` are the *absolute* per-position values of
+        the new tokens (computed by the caller from the full running sequence).
+        Reuses ``cache`` so the result is bit-exact with a full
+        :meth:`forward` over the whole prefix. Returns logits ``[B, m, vocab]``;
+        callers typically read the last position. Generation is pad-free, so
+        ``attn_mask`` is omitted throughout.
+        """
+
+        if self.cfg.core_type != "two_stage":
+            raise NotImplementedError(
+                "incremental KV/state cache is implemented for core_type="
+                "'two_stage' only"
+            )
+
+        bsz, seq_len = input_ids.shape
+        pos_offset = cache.seq_len
+
+        h = self.embed(input_ids)
+        if pixel_values is not None:
+            h = self.vision(h, input_ids, pixel_values)
+
+        for i, block in enumerate(self.prelude):
+            h = block(
+                h,
+                word_pos=word_pos,
+                morph_depth=morph_depth,
+                attn_mask=None,
+                causal=True,
+                cache=cache.mla_cache(f"prelude.{i}"),
+                pos_offset=pos_offset,
+            )
+
+        h, _rec_info = self.recurrent(
+            h,
+            word_pos=word_pos,
+            morph_depth=morph_depth,
+            attn_mask=None,
+            causal=True,
+            cache=cache,
+            pos_offset=pos_offset,
+        )
+
+        for i, block in enumerate(self.coda):
+            h = block(
+                h,
+                word_pos=word_pos,
+                morph_depth=morph_depth,
+                attn_mask=None,
+                causal=True,
+                cache=cache.mla_cache(f"coda.{i}"),
+                pos_offset=pos_offset,
+            )
+
+        h = self.final_norm(h)
+        logits = self.lm_head(h)
+        cache.seq_len = pos_offset + seq_len
+        return logits
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -459,6 +527,7 @@ class RDTForCausalLM(nn.Module):
         eos_id: int | None = None,
         pad_id: int | None = None,
         repetition_penalty: float = 1.0,
+        use_cache: bool = False,
     ) -> torch.Tensor:
         """Autoregressively continue ``input_ids`` (``[B, L]``) with sampling.
 
@@ -466,27 +535,23 @@ class RDTForCausalLM(nn.Module):
         and nucleus ``top_p`` truncation, plus CTRL-style ``repetition_penalty``;
         ``greedy=True`` takes the argmax.
 
-        Decoding is currently cache-free: each step re-runs ``forward`` on the
-        running prefix and samples from the final-position logits. This matches
-        training semantics exactly (``word_pos``/``morph_depth`` are recomputed
-        from ids by ``forward``) but costs O(L^2) attention per generated token,
-        compounded by the Stage-2 ``recurrent_steps`` refinement loop.
-
-        Efficient incremental decoding (future work, large separate change) would
-        thread a per-position state cache through ``forward``:
+        With ``use_cache=True`` (``core_type='two_stage'`` only) decoding runs an
+        incremental KV/state cache that is numerically identical to the cache-
+        free path but processes one token per step instead of re-running the
+        whole prefix:
 
         * **Stage 1 (Mamba)** keeps a constant-size ``(conv_state, ssm_state)``
           per layer and steps the selective SSM once per new token -- O(1) time
-          and memory (Gu & Dao, "Mamba", 2023/2024).
-        * **Stage 2 (MLA)** caches only the compressed latent ``c_KV`` of width
-          ``kv_lora_rank`` per position instead of full K/V, the DeepSeek-V2/V3
-          Multi-head Latent Attention trick (arXiv:2405.04434), and -- because
-          each refinement pass is causal and earlier positions are frozen once
-          computed -- maintains one such latent cache per refinement step.
+          and memory per step (Gu & Dao, "Mamba", 2023/2024).
+        * **Stage 2 (MLA)** appends the new token's ``K``/``V`` to a per-layer
+          cache and attends over the frozen prefix; because each refinement pass
+          is causal and earlier positions are frozen once computed, one cache is
+          kept per ``(refinement step, layer)`` pair.
 
-        Neither sub-layer exposes a single-step primitive yet, so the cache is
-        deliberately omitted here to keep outputs provably identical to the
-        training forward.
+        The cached path keeps the full context (no sliding-window eviction), so
+        ``L + max_new_tokens`` must stay within ``max_seq_len``; the cache-free
+        path instead slides a ``max_seq_len`` window. ``use_cache`` is only
+        supported for ``core_type='two_stage'``.
 
         Returns the full sequence ``[B, L + n]`` where ``n <= max_new_tokens``.
         Generation stops early for a row once it emits ``eos_id`` (subsequent
@@ -507,6 +572,10 @@ class RDTForCausalLM(nn.Module):
             raise ValueError("min_p must be in (0, 1] when set")
         if repetition_penalty <= 0:
             raise ValueError("repetition_penalty must be positive")
+        if use_cache and self.cfg.core_type != "two_stage":
+            raise NotImplementedError(
+                "use_cache=True is only supported for core_type='two_stage'"
+            )
 
         cfg = self.cfg
         eos_id = cfg.eos_id if eos_id is None else eos_id
@@ -519,14 +588,40 @@ class RDTForCausalLM(nn.Module):
         device = seq.device
         finished = torch.zeros(seq.shape[0], dtype=torch.bool, device=device)
 
+        decode_cache = None
+        if use_cache:
+            from Model.inference.cache import DecodeCache
+
+            decode_cache = DecodeCache()
+
         try:
             for _ in range(max_new_tokens):
-                window = seq
-                if window.shape[1] > cfg.max_seq_len:
-                    window = window[:, -cfg.max_seq_len:]
+                if use_cache:
+                    if decode_cache.seq_len == 0:
+                        step_ids = seq
+                    else:
+                        step_ids = seq[:, -1:]
+                    if seq.shape[1] > cfg.max_seq_len:
+                        raise ValueError(
+                            "cached generation exceeded max_seq_len; reduce "
+                            "max_new_tokens or use use_cache=False"
+                        )
+                    mask = (seq != pad_id).long()
+                    word_pos, morph_depth = self._default_morph_info(seq, mask)
+                    m = step_ids.shape[1]
+                    logits = self._forward_decode(
+                        step_ids,
+                        word_pos=word_pos[:, -m:],
+                        morph_depth=morph_depth[:, -m:],
+                        cache=decode_cache,
+                    )[:, -1, :].float()
+                else:
+                    window = seq
+                    if window.shape[1] > cfg.max_seq_len:
+                        window = window[:, -cfg.max_seq_len:]
 
-                out = self.forward(window, return_logits=True)
-                logits = out["logits"][:, -1, :].float()
+                    out = self.forward(window, return_logits=True)
+                    logits = out["logits"][:, -1, :].float()
 
                 if repetition_penalty != 1.0:
                     logits = self._apply_repetition_penalty(
