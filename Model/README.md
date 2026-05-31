@@ -85,10 +85,12 @@ Drift control for the refinement loop (`recurrent_drift_mode`):
   `mhc_sinkhorn_iters` (default 20).
 
 Constraints: `core_type="two_stage"` requires `use_act=False`, and
-`two_stage_downsample` stays `False` on the causal pretraining path (pooling a
-word's characters would leak intra-word future). Tests:
-`python test_mhc.py`, `python smoke_two_stage.py`,
-`python -m pytest Model/tests/test_two_stage_integration.py`.
+`two_stage_downsample` must stay `False` (the downsample path is not implemented
+for the causal pretraining core — pooling a word's characters would leak
+intra-word future, so `True` raises). Tests run under the standard runner:
+`python3 -m unittest discover Model` (covers `Model/tests/test_mhc.py` and
+`Model/tests/test_two_stage_integration.py`). Optional manual smoke:
+`python3 smoke_two_stage.py`.
 
 
 ## 3. Training entry points

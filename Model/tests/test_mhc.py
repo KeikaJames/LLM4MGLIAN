@@ -73,7 +73,10 @@ class ManifoldHyperConnectionTest(unittest.TestCase):
         hc.eval()
 
         with torch.no_grad():
-            hc.res_bias.copy_(torch.randn(4, 4) + 1.0)
+            # Deterministic all-ones logits: softplus(1) ~ 1.31 per entry, so each
+            # row sums to ~5.25 >> 1 and the unconstrained mixing is guaranteed to
+            # blow up over repeated application (no reliance on a random draw).
+            hc.res_bias.copy_(torch.ones(4, 4))
 
         x = torch.randn(2, 6, d_model)
         streams = hc.expand(x)

@@ -43,6 +43,13 @@ def sinkhorn_knopp(log_alpha: torch.Tensor, n_iters: int = 20) -> torch.Tensor:
     Operates in log space for numerical stability by alternating row and column
     log-normalization. The last two dims are treated as the ``n x n`` matrix; any
     leading dims are batched.
+
+    The iteration always runs in float32 (the result is cast back to the input
+    dtype). Under bf16/fp16 autocast — as used during pretraining — repeated
+    ``logsumexp`` in low precision drifts enough to break the doubly-stochastic
+    guarantee, so the projection is computed in float32 regardless of input dtype.
+    At least one normalization step is performed so the output is always (close
+    to) doubly stochastic rather than an unnormalized ``exp(log_alpha)``.
     """
 
     if log_alpha.ndim < 2:
@@ -52,11 +59,14 @@ def sinkhorn_knopp(log_alpha: torch.Tensor, n_iters: int = 20) -> torch.Tensor:
     if n_iters < 0:
         raise ValueError("n_iters must be non-negative")
 
-    for _ in range(n_iters):
-        log_alpha = log_alpha - torch.logsumexp(log_alpha, dim=-1, keepdim=True)
-        log_alpha = log_alpha - torch.logsumexp(log_alpha, dim=-2, keepdim=True)
+    in_dtype = log_alpha.dtype
+    work = log_alpha.float()
 
-    return torch.exp(log_alpha)
+    for _ in range(max(n_iters, 1)):
+        work = work - torch.logsumexp(work, dim=-1, keepdim=True)
+        work = work - torch.logsumexp(work, dim=-2, keepdim=True)
+
+    return torch.exp(work).to(in_dtype)
 
 
 class ManifoldHyperConnection(nn.Module):

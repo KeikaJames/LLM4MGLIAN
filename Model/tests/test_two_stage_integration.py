@@ -17,7 +17,7 @@ class TwoStageIntegrationTest(unittest.TestCase):
 
         self.assertIsInstance(model.recurrent, TwoStageCore)
 
-        input_ids = torch.randint(256, 24576, (2, 24))
+        input_ids = torch.randint(256, cfg.vocab_size, (2, 24))
         input_ids[:, 0] = cfg.bos_id
         labels = input_ids.clone()
 
@@ -42,12 +42,14 @@ class TwoStageIntegrationTest(unittest.TestCase):
         seq_len = 12
         split = 6
 
-        base = torch.randint(256, 24576, (1, seq_len))
+        base = torch.randint(256, cfg.vocab_size, (1, seq_len))
         base[:, 0] = cfg.bos_id
 
         other = base.clone()
         # Perturb every token strictly after ``split``.
-        other[:, split + 1 :] = torch.randint(256, 24576, (1, seq_len - split - 1))
+        other[:, split + 1 :] = torch.randint(
+            256, cfg.vocab_size, (1, seq_len - split - 1)
+        )
 
         # Supply identical, explicit morph info so the default derivation (which
         # scans the whole row) cannot itself introduce a prefix difference.

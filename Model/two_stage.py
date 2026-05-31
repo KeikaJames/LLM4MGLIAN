@@ -129,6 +129,13 @@ class TwoStageCore(nn.Module):
         self.downsample = cfg.two_stage_downsample
         self.max_segments = cfg.two_stage_max_segments
 
+        if self.downsample:
+            raise NotImplementedError(
+                "two_stage_downsample=True is not implemented for the causal "
+                "two-stage core (it would leak intra-word future on a causal "
+                "path); keep two_stage_downsample=False"
+            )
+
         self.grad_ckpt_stage1 = bool(getattr(cfg, "grad_ckpt_blocks", False))
         self.grad_ckpt_stage2 = bool(getattr(cfg, "grad_ckpt_recurrent", False))
 
@@ -190,6 +197,7 @@ class TwoStageCore(nn.Module):
                 attn_mask=attn_mask,
                 causal=causal,
                 total_steps=total_steps,
+                bptt_window=bptt_window,
             )
         else:
             hidden = self._refine_plain(
@@ -281,13 +289,24 @@ class TwoStageCore(nn.Module):
         attn_mask: torch.Tensor | None,
         causal: bool,
         total_steps: int,
+        bptt_window: int | None,
     ) -> torch.Tensor:
         # Expand once, keep n streams across every step/layer, collapse once.
-        # bptt_window is intentionally ignored here: stability comes from the
-        # per-layer doubly-stochastic constraint, not from truncated BPTT.
+        # bptt_window truncates backprop through the recurrent steps: streams are
+        # detached before the last ``bptt_window`` steps so activation memory
+        # stays bounded during training (drop-in with RecurrentCore). Per-step
+        # stability still comes from the per-layer doubly-stochastic constraint.
+        if bptt_window is not None:
+            if bptt_window <= 0:
+                raise ValueError("bptt_window must be positive")
+            bptt_window = min(bptt_window, total_steps)
+
         streams = self._expand(backbone)
 
-        for _step in range(total_steps):
+        for step in range(total_steps):
+            if bptt_window is not None and step < total_steps - bptt_window:
+                streams = streams.detach()
+
             for layer in self.stage2:
                 streams = self._maybe_ckpt(
                     layer,

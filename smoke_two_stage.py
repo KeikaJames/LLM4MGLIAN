@@ -28,8 +28,11 @@ def _make_cfg(drift_mode: str):
 
 def _inputs(bsz: int, seq_len: int, d_model: int):
     e0 = torch.randn(bsz, seq_len, d_model)
-    # Two words per row so the orientation probe sees same-word adjacent pairs.
-    word_pos = (torch.arange(seq_len) // (seq_len // 2)).unsqueeze(0).expand(bsz, seq_len)
+    # Split each row into two contiguous words (a left and a right half) so the
+    # orientation probe sees same-word adjacent pairs. A half-split avoids the
+    # ``seq_len // 2`` divide-by-zero (seq_len < 2) and never yields >2 word ids.
+    half = (seq_len + 1) // 2
+    word_pos = (torch.arange(seq_len) >= half).long().unsqueeze(0).expand(bsz, seq_len)
     morph_depth = torch.zeros(bsz, seq_len, dtype=torch.long)
     attn_mask = torch.ones(bsz, seq_len, dtype=torch.long)
     return e0, word_pos, morph_depth, attn_mask

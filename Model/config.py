@@ -360,6 +360,23 @@ class RDTConfig:
             if self.recurrent_inject_decay < 0:
                 raise ValueError("recurrent_inject_decay must be non-negative")
 
+            if self.recurrent_drift_mode == "mhc" and self.mhc_sinkhorn_iters < 1:
+                raise ValueError(
+                    "recurrent_drift_mode='mhc' requires mhc_sinkhorn_iters >= 1; "
+                    "0 iterations cannot project onto the Birkhoff polytope"
+                )
+
+            # Order-preserving downsampling is not implemented for the causal
+            # two-stage core: mean-pooling a word's characters into one segment
+            # leaks that word's future characters into earlier positions. Reject
+            # it explicitly instead of letting the knob silently no-op.
+            if self.two_stage_downsample:
+                raise ValueError(
+                    "two_stage_downsample=True is not supported by the causal "
+                    "two-stage core (it would leak intra-word future on a causal "
+                    "path); keep two_stage_downsample=False"
+                )
+
     @property
     def block_layers(self) -> int:
         return self.mamba_per_block + self.attn_per_block
