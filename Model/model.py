@@ -11,6 +11,7 @@ from Model.blocks import StandardBlock
 from Model.config import RDTConfig
 from Model.layers.rmsnorm import RMSNorm
 from Model.recurrent import RecurrentCore
+from Model.two_stage import TwoStageCore
 from Model.vision import VisionInjector
 
 
@@ -33,7 +34,11 @@ class RDTForCausalLM(nn.Module):
             StandardBlock(cfg, layer_idx=i) for i in range(cfg.n_prelude)
         )
 
-        self.recurrent = RecurrentCore(cfg)
+        self.recurrent = (
+            TwoStageCore(cfg)
+            if cfg.core_type == "two_stage"
+            else RecurrentCore(cfg)
+        )
 
         self.coda = nn.ModuleList(
             StandardBlock(cfg, layer_idx=cfg.n_prelude + i) for i in range(cfg.n_coda)

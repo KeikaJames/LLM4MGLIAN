@@ -151,6 +151,31 @@ class RDTConfig:
     inject_embedding: bool = True
     inject_scale: float = 1.0
 
+    # Recurrent core selection. "interleaved" uses RecurrentCore (Mamba/attn
+    # interleaved per step). "two_stage" uses TwoStageCore: a pure-Mamba
+    # encoding stage followed by a pure-attention recurrent refinement stage.
+    core_type: str = "interleaved"
+    stage1_mamba_layers: int = 5
+    stage2_attn_layers: int = 1
+
+    # Drift control for the two-stage refinement loop:
+    #   none  — plain recurrent attention refinement.
+    #   norm  — RMSNorm between recurrent steps (boundary norm).
+    #   decay — inject decayed Stage-1 semantics each step.
+    #   both  — norm + decay.
+    #   mhc   — per-layer Manifold-Constrained Hyper-Connections (MHCAttnSubLayer);
+    #           the loop itself does no injection or boundary norm.
+    recurrent_drift_mode: str = "none"
+    recurrent_inject_decay: float = 0.5
+    mhc_n_streams: int = 4
+    mhc_sinkhorn_iters: int = 20
+
+    # Order-preserving downsampling for the two-stage core. Default off: causal
+    # pretraining would leak intra-word future characters through pooled
+    # segments. Kept available for non-causal scenarios.
+    two_stage_downsample: bool = False
+    two_stage_max_segments: int = 0
+
     use_act: bool = False
     act_threshold: float = 0.99
     act_max_steps: int = 32
@@ -193,6 +218,7 @@ class RDTConfig:
         self._check_dims()
         self._check_depth()
         self._check_objectives()
+        self._check_core()
 
     def _check_tokens(self) -> None:
         if self.vocab_size != VOCAB_SIZE:
@@ -304,6 +330,53 @@ class RDTConfig:
         if self.loss_chunk_size is not None and self.loss_chunk_size <= 0:
             raise ValueError("loss_chunk_size must be positive")
 
+    def _check_core(self) -> None:
+        if self.core_type not in {"interleaved", "two_stage"}:
+            raise ValueError(
+                f"core_type must be 'interleaved' or 'two_stage', got {self.core_type!r}"
+            )
+
+        if self.recurrent_drift_mode not in {"none", "norm", "decay", "both", "mhc"}:
+            raise ValueError(
+                "recurrent_drift_mode must be one of "
+                "'none'/'norm'/'decay'/'both'/'mhc', got "
+                f"{self.recurrent_drift_mode!r}"
+            )
+
+        if self.core_type == "two_stage":
+            if self.use_act:
+                raise ValueError(
+                    "core_type='two_stage' does not support use_act=True; ACT is "
+                    "only implemented for the interleaved RecurrentCore"
+                )
+            if self.stage1_mamba_layers <= 0:
+                raise ValueError("stage1_mamba_layers must be positive")
+            if self.stage2_attn_layers <= 0:
+                raise ValueError("stage2_attn_layers must be positive")
+            if self.mhc_n_streams <= 0:
+                raise ValueError("mhc_n_streams must be positive")
+            if self.mhc_sinkhorn_iters < 0:
+                raise ValueError("mhc_sinkhorn_iters must be non-negative")
+            if self.recurrent_inject_decay < 0:
+                raise ValueError("recurrent_inject_decay must be non-negative")
+
+            if self.recurrent_drift_mode == "mhc" and self.mhc_sinkhorn_iters < 1:
+                raise ValueError(
+                    "recurrent_drift_mode='mhc' requires mhc_sinkhorn_iters >= 1; "
+                    "0 iterations cannot project onto the Birkhoff polytope"
+                )
+
+            # Order-preserving downsampling is not implemented for the causal
+            # two-stage core: mean-pooling a word's characters into one segment
+            # leaks that word's future characters into earlier positions. Reject
+            # it explicitly instead of letting the knob silently no-op.
+            if self.two_stage_downsample:
+                raise ValueError(
+                    "two_stage_downsample=True is not supported by the causal "
+                    "two-stage core (it would leak intra-word future on a causal "
+                    "path); keep two_stage_downsample=False"
+                )
+
     @property
     def block_layers(self) -> int:
         return self.mamba_per_block + self.attn_per_block
@@ -398,6 +471,70 @@ def pretrain_config() -> RDTConfig:
         grad_ckpt_recurrent=True,
         grad_ckpt_prelude_coda=True,
         loss_chunk_size=8192,
+    )
+
+
+def two_stage_tiny_config() -> RDTConfig:
+    """Tiny two-stage core for CPU smoke / tests (NaiveSSM fallback).
+
+    Mirrors :func:`tiny_config` shape but routes through ``TwoStageCore`` with
+    per-layer mHC drift control.
+    """
+
+    return RDTConfig(
+        d_model=512,
+        n_heads=8,
+        head_dim=64,
+        kv_lora_rank=128,
+        rope_head_dim=32,
+        nope_head_dim=32,
+        ffn_hidden=1536,
+        ffn_multiple=256,
+        n_prelude=2,
+        n_coda=2,
+        mamba_per_block=5,
+        attn_per_block=1,
+        recurrent_steps=4,
+        max_seq_len=2048,
+        use_official_mamba=False,
+        core_type="two_stage",
+        stage1_mamba_layers=5,
+        stage2_attn_layers=1,
+        recurrent_drift_mode="mhc",
+        mhc_n_streams=4,
+        mhc_sinkhorn_iters=20,
+    )
+
+
+def two_stage_pretrain_config() -> RDTConfig:
+    """~1.1B two-stage RDT for formal pretraining (official Mamba on CUDA)."""
+
+    return RDTConfig(
+        d_model=2048,
+        n_heads=16,
+        head_dim=128,
+        kv_lora_rank=512,
+        rope_head_dim=64,
+        nope_head_dim=64,
+        ffn_hidden=8192,
+        ffn_multiple=256,
+        n_prelude=3,
+        n_coda=3,
+        mamba_per_block=5,
+        attn_per_block=1,
+        recurrent_steps=8,
+        max_seq_len=4096,
+        use_official_mamba=True,
+        bidirectional=False,
+        grad_ckpt_recurrent=True,
+        grad_ckpt_prelude_coda=True,
+        loss_chunk_size=8192,
+        core_type="two_stage",
+        stage1_mamba_layers=5,
+        stage2_attn_layers=1,
+        recurrent_drift_mode="mhc",
+        mhc_n_streams=4,
+        mhc_sinkhorn_iters=20,
     )
 
 
