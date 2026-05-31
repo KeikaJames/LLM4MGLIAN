@@ -59,6 +59,38 @@ Activation-memory controls (in `RDTConfig`):
   `act_max_steps` upper bound; the loop runs the full bound without
   host-syncs so CUDA streams stay pipelined.
 
+### Two-stage core (`core_type="two_stage"`)
+
+`TwoStageCore` (`Model/two_stage.py`) is a drop-in replacement for
+`RecurrentCore` with the same forward signature/return contract. It splits the
+recurrent core into a **pure-Mamba encoding stage** (order-preserving,
+equal-length compression of the *raw* context) followed by a **pure-attention
+refinement stage** (recurrent MLA on top of the Mamba backbone — the
+Transformer never touches raw context).
+
+```python
+from Model.config import two_stage_tiny_config, two_stage_pretrain_config
+cfg = two_stage_pretrain_config()  # mHC drift control, official Mamba on CUDA
+```
+
+Drift control for the refinement loop (`recurrent_drift_mode`):
+
+- `none` / `norm` / `decay` / `both` — plain recurrent attention with optional
+  boundary RMSNorm and/or decayed Stage-1 injection (`recurrent_inject_decay`).
+- `mhc` — Manifold-Constrained Hyper-Connections (arXiv:2512.24880) sunk into
+  **every attention/ffn residual** via `MHCAttnSubLayer`. Streams are expanded
+  once, kept across all steps/layers, and collapsed once; stability comes from
+  the per-layer doubly-stochastic (Sinkhorn) constraint, not from loop-level
+  injection or boundary norm. Tunables: `mhc_n_streams` (default 4),
+  `mhc_sinkhorn_iters` (default 20).
+
+Constraints: `core_type="two_stage"` requires `use_act=False`, and
+`two_stage_downsample` stays `False` on the causal pretraining path (pooling a
+word's characters would leak intra-word future). Tests:
+`python test_mhc.py`, `python smoke_two_stage.py`,
+`python -m pytest Model/tests/test_two_stage_integration.py`.
+
+
 ## 3. Training entry points
 
 All three scripts are CLI-driven and accept `--smoke` for a synthetic
