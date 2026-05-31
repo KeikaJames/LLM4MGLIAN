@@ -117,13 +117,42 @@ def _iter_json_array(path: str, fields: tuple[str, ...]) -> Iterator[str]:
                     yield text
 
 
+def _sniff_json_layout(path: str) -> str:
+    """Return ``"array"`` if the file's first non-whitespace byte is ``[`` else
+    ``"jsonl"``. Lets ``.json`` files that are real JSON arrays and line-
+    delimited JSONL both be read, instead of silently yielding nothing when the
+    assumed layout is wrong.
+    """
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            while True:
+                ch = f.read(1)
+                if not ch:
+                    return "jsonl"
+                if not ch.isspace():
+                    return "array" if ch == "[" else "jsonl"
+    except OSError:
+        return "jsonl"
+
+
+def _iter_json_fields(path: str, fields: tuple[str, ...]) -> Iterator[str]:
+    """Read ``fields`` from a ``.json``/``.jsonl`` file, auto-detecting whether
+    it is a JSON array or line-delimited JSONL."""
+
+    if _sniff_json_layout(path) == "array":
+        yield from _iter_json_array(path, fields)
+    else:
+        yield from _iter_jsonl_fields(path, fields)
+
+
 def _iter_chinese(root: str) -> Iterator[str]:
     renmin = os.path.join(root, "人民日报2023.json")
     if os.path.exists(renmin):
-        yield from _iter_jsonl_fields(renmin, ("content", "title"))
+        yield from _iter_json_fields(renmin, ("content", "title"))
     qa = os.path.join(root, "问答语料300.json")
     if os.path.exists(qa):
-        yield from _iter_jsonl_fields(qa, ("question", "answer"))
+        yield from _iter_json_fields(qa, ("question", "answer"))
     journal = os.path.join(root, "JournalArticle2013_2023")
     if os.path.isdir(journal):
         fields = (

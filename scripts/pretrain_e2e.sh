@@ -46,7 +46,6 @@ TRAIN_ARGS="${TRAIN_ARGS:-}"
 if [ "$SMOKE" = "1" ]; then
     # Tiny, fast, dependency-light defaults for the local self-test.
     WORK="${WORK:-$ROOT/outputs/pretrain_e2e_smoke}"
-    WORK="$ROOT/outputs/pretrain_e2e_smoke"
     MORPHBPE_VOCAB=400
     GENERAL_VOCAB=500
     MAX_LENGTH=128
@@ -76,7 +75,7 @@ log() { printf '\n==> %s\n' "$*"; }
 # ---------------------------------------------------------------------------
 log "[0/5] checking build dependencies"
 WIKI_LANGS="$WIKI_LANGS" python3 - <<'PY'
-import importlib, os, sys
+import importlib.util, os, sys
 
 required = ["tokenizers"]
 # ``datasets`` is only needed to sample Wikipedia. Local-only and SMOKE runs
