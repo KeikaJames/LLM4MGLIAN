@@ -33,7 +33,7 @@ class ManifoldHyperConnectionTest(unittest.TestCase):
         hc = ManifoldHyperConnection(8, n_streams=4, sinkhorn_iters=20)
 
         with torch.no_grad():
-            hc.res_logits.copy_(torch.randn(4, 4))
+            hc.res_bias.copy_(torch.randn(4, 4))
 
         mat = hc.residual_matrix()
         self.assertTrue(torch.allclose(mat.sum(dim=-1), torch.ones(4), atol=1e-3))
@@ -46,7 +46,7 @@ class ManifoldHyperConnectionTest(unittest.TestCase):
         hc.eval()
 
         with torch.no_grad():
-            hc.res_logits.copy_(torch.randn(4, 4))
+            hc.res_bias.copy_(torch.randn(4, 4))
 
         x = torch.randn(2, 6, d_model)
         streams = hc.expand(x)
@@ -73,7 +73,7 @@ class ManifoldHyperConnectionTest(unittest.TestCase):
         hc.eval()
 
         with torch.no_grad():
-            hc.res_logits.copy_(torch.randn(4, 4) + 1.0)
+            hc.res_bias.copy_(torch.randn(4, 4) + 1.0)
 
         x = torch.randn(2, 6, d_model)
         streams = hc.expand(x)
@@ -117,7 +117,45 @@ class ManifoldHyperConnectionTest(unittest.TestCase):
         self.assertIsNotNone(x.grad)
         self.assertTrue(torch.isfinite(x.grad).all())
         self.assertGreater(x.grad.norm().item(), 0.0)
-        self.assertIsNotNone(hc.res_logits.grad)
+        self.assertIsNotNone(hc.res_bias.grad)
+
+    def test_maps_are_data_dependent_when_gated(self):
+        """With a non-zero dynamic gate the maps vary with the input (Eq. 5/7)."""
+
+        torch.manual_seed(0)
+        d_model = 8
+        hc = ManifoldHyperConnection(d_model, n_streams=4, sinkhorn_iters=20)
+        hc.eval()
+
+        # At init the gates are zero, so the residual matrix is identical for
+        # every token regardless of the input (data-independent).
+        x = torch.randn(2, 4, d_model)
+        ref = hc._dyn_ref(hc.expand(x))
+        mat_init = hc.residual_matrix(ref)
+        self.assertTrue(
+            torch.allclose(mat_init, mat_init[:, :1], atol=1e-5),
+            "maps must be data-independent at init (alpha == 0)",
+        )
+
+        # Turn the dynamic gates on; now the per-token maps must differ across
+        # positions with different inputs.
+        with torch.no_grad():
+            hc.pre_alpha.fill_(1.0)
+            hc.post_alpha.fill_(1.0)
+            hc.res_alpha.fill_(1.0)
+            hc.res_proj.weight.normal_()
+            hc.pre_proj.weight.normal_()
+            hc.post_proj.weight.normal_()
+
+        ref = hc._dyn_ref(hc.expand(x))
+        mat = hc.residual_matrix(ref)
+        self.assertFalse(
+            torch.allclose(mat[:, 0], mat[:, 1], atol=1e-4),
+            "maps must vary with the input once gated",
+        )
+        # Doubly-stochastic constraint must still hold per token.
+        self.assertTrue(torch.allclose(mat.sum(dim=-1), torch.ones_like(mat.sum(dim=-1)), atol=1e-2))
+        self.assertTrue(torch.allclose(mat.sum(dim=-2), torch.ones_like(mat.sum(dim=-2)), atol=1e-2))
 
 
 class MHCSubLayerStabilityTest(unittest.TestCase):
