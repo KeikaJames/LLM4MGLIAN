@@ -116,7 +116,30 @@ class GenerateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.generate(prompt, top_p=1.5)
         with self.assertRaises(ValueError):
+            model.generate(prompt, min_p=1.5)
+        with self.assertRaises(ValueError):
             model.generate(prompt.view(-1), max_new_tokens=1)
+
+    def test_min_p_filter_masks_low_prob_tokens(self):
+        cfg = _cfg()
+        model = RDTForCausalLM(cfg)
+        # One dominant token (prob ~0.9) and a long tail; min_p=0.5 must keep
+        # only tokens with prob >= 0.5 * p_max, i.e. just the dominant one.
+        logits = torch.full((1, 8), -10.0)
+        logits[0, 3] = 5.0
+        filtered = model._filter_logits(logits, top_k=None, top_p=None, min_p=0.5)
+        kept = (filtered[0] > float("-inf")).nonzero().flatten().tolist()
+        self.assertEqual(kept, [3])
+
+    def test_min_p_one_keeps_only_max(self):
+        torch.manual_seed(0)
+        cfg = _cfg()
+        model = RDTForCausalLM(cfg)
+        prompt = self._prompt(cfg)
+        # min_p=1.0 keeps only the argmax token -> equivalent to greedy.
+        greedy = model.generate(prompt, max_new_tokens=4, greedy=True)
+        min_p = model.generate(prompt, max_new_tokens=4, min_p=1.0)
+        self.assertTrue(torch.equal(greedy, min_p))
 
 
 if __name__ == "__main__":

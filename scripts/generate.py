@@ -46,6 +46,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--top-k", type=int, default=None)
     p.add_argument("--top-p", type=float, default=None)
+    p.add_argument("--min-p", type=float, default=None)
     p.add_argument("--repetition-penalty", type=float, default=1.0)
     p.add_argument("--greedy", action="store_true")
     p.add_argument(
@@ -94,6 +95,7 @@ def main(argv: list[str] | None = None) -> None:
         temperature=args.temperature,
         top_k=args.top_k,
         top_p=args.top_p,
+        min_p=args.min_p,
         greedy=args.greedy,
         repetition_penalty=args.repetition_penalty,
     )

@@ -447,7 +447,6 @@ class RDTForCausalLM(nn.Module):
                     module.weight[module.padding_idx].zero_()
 
     @torch.no_grad()
-    @torch.no_grad()
     def generate(
         self,
         input_ids: torch.Tensor,
@@ -455,6 +454,7 @@ class RDTForCausalLM(nn.Module):
         temperature: float = 1.0,
         top_k: int | None = None,
         top_p: float | None = None,
+        min_p: float | None = None,
         greedy: bool = False,
         eos_id: int | None = None,
         pad_id: int | None = None,
@@ -462,11 +462,31 @@ class RDTForCausalLM(nn.Module):
     ) -> torch.Tensor:
         """Autoregressively continue ``input_ids`` (``[B, L]``) with sampling.
 
-        Correct, cache-free decoding: each step re-runs ``forward`` on the
-        running prefix and samples from the final-position logits. This is
-        O(L^2) but matches training semantics exactly (word_pos/morph_depth are
-        recomputed from ids by ``forward``); a KV/Mamba-state cache can replace
-        the re-encode later without changing outputs.
+        Sampling controls: ``temperature`` then ``min_p`` (ICLR 2025), ``top_k``
+        and nucleus ``top_p`` truncation, plus CTRL-style ``repetition_penalty``;
+        ``greedy=True`` takes the argmax.
+
+        Decoding is currently cache-free: each step re-runs ``forward`` on the
+        running prefix and samples from the final-position logits. This matches
+        training semantics exactly (``word_pos``/``morph_depth`` are recomputed
+        from ids by ``forward``) but costs O(L^2) attention per generated token,
+        compounded by the Stage-2 ``recurrent_steps`` refinement loop.
+
+        Efficient incremental decoding (future work, large separate change) would
+        thread a per-position state cache through ``forward``:
+
+        * **Stage 1 (Mamba)** keeps a constant-size ``(conv_state, ssm_state)``
+          per layer and steps the selective SSM once per new token -- O(1) time
+          and memory (Gu & Dao, "Mamba", 2023/2024).
+        * **Stage 2 (MLA)** caches only the compressed latent ``c_KV`` of width
+          ``kv_lora_rank`` per position instead of full K/V, the DeepSeek-V2/V3
+          Multi-head Latent Attention trick (arXiv:2405.04434), and -- because
+          each refinement pass is causal and earlier positions are frozen once
+          computed -- maintains one such latent cache per refinement step.
+
+        Neither sub-layer exposes a single-step primitive yet, so the cache is
+        deliberately omitted here to keep outputs provably identical to the
+        training forward.
 
         Returns the full sequence ``[B, L + n]`` where ``n <= max_new_tokens``.
         Generation stops early for a row once it emits ``eos_id`` (subsequent
@@ -483,6 +503,8 @@ class RDTForCausalLM(nn.Module):
             raise ValueError("top_k must be positive when set")
         if top_p is not None and not (0.0 < top_p <= 1.0):
             raise ValueError("top_p must be in (0, 1] when set")
+        if min_p is not None and not (0.0 < min_p <= 1.0):
+            raise ValueError("min_p must be in (0, 1] when set")
         if repetition_penalty <= 0:
             raise ValueError("repetition_penalty must be positive")
 
@@ -515,7 +537,7 @@ class RDTForCausalLM(nn.Module):
                     next_token = torch.argmax(logits, dim=-1)
                 else:
                     logits = logits / temperature
-                    logits = self._filter_logits(logits, top_k, top_p)
+                    logits = self._filter_logits(logits, top_k, top_p, min_p)
                     probs = F.softmax(logits, dim=-1)
                     next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
 
@@ -548,9 +570,25 @@ class RDTForCausalLM(nn.Module):
 
     @staticmethod
     def _filter_logits(
-        logits: torch.Tensor, top_k: int | None, top_p: float | None
+        logits: torch.Tensor,
+        top_k: int | None,
+        top_p: float | None,
+        min_p: float | None = None,
     ) -> torch.Tensor:
-        """Apply top-k then nucleus (top-p) masking to a ``[B, V]`` logit row."""
+        """Apply top-k, nucleus (top-p) and min-p masking to ``[B, V]`` logits.
+
+        min-p (Nguyen et al., "Turning Up the Heat: Min-p Sampling for
+        Creative and Coherent LLM Outputs", ICLR 2025) keeps only tokens whose
+        probability is at least ``min_p * p_max`` where ``p_max`` is the top
+        token's probability. The candidate pool scales with the model's own
+        confidence: sharp distributions prune hard, flat ones stay permissive.
+        It is applied before top-k/top-p so it can act as the primary truncation.
+        """
+
+        if min_p is not None:
+            probs = F.softmax(logits, dim=-1)
+            p_max = probs.max(dim=-1, keepdim=True).values
+            logits = logits.masked_fill(probs < min_p * p_max, float("-inf"))
 
         if top_k is not None:
             k = min(top_k, logits.shape[-1])
