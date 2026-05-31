@@ -9,6 +9,7 @@ Tracks:
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -145,6 +146,21 @@ def segment_by_language(text: str) -> list[Span]:
         spans.append(Span(cur_lang, text[start:], start, len(text)))
 
     return spans
+
+
+def _general_piece_track(surface: str) -> str:
+    """Classify a general-track piece as a word piece or a punctuation piece.
+
+    Punctuation/symbol pieces use the ``general_punct`` track so the model-side
+    morphology derivation resets ``word_pos``/``morph_depth`` around them (the
+    same boundary behavior the retired ``misc`` track provided), while real
+    word pieces (containing any letter or number) keep grouping under
+    ``general`` so contiguous subtokens of one word share a word position.
+    """
+
+    if surface and any(unicodedata.category(ch)[0] in ("L", "N") for ch in surface):
+        return "general"
+    return "general_punct"
 
 
 class DualTrackTokenizer:
@@ -285,7 +301,7 @@ class DualTrackTokenizer:
                 EncodedToken(
                     self.general_local_to_global.get(local_id, self.unk_id),
                     token,
-                    "general",
+                    _general_piece_track(span.text[start:end]),
                     span.start + start,
                     span.start + end,
                 )

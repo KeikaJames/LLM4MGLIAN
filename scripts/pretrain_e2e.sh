@@ -75,16 +75,23 @@ log() { printf '\n==> %s\n' "$*"; }
 # Stage 0: dependency check
 # ---------------------------------------------------------------------------
 log "[0/5] checking build dependencies"
-python3 - <<'PY'
-import importlib, sys
-missing = [m for m in ("tokenizers", "datasets") if importlib.util.find_spec(m) is None]
+WIKI_LANGS="$WIKI_LANGS" python3 - <<'PY'
+import importlib, os, sys
+
+required = ["tokenizers"]
+# ``datasets`` is only needed to sample Wikipedia. Local-only and SMOKE runs
+# (WIKI_LANGS empty) must stay dependency-light.
+if os.environ.get("WIKI_LANGS", "").strip():
+    required.append("datasets")
+
+missing = [m for m in required if importlib.util.find_spec(m) is None]
 if missing:
     sys.stderr.write(
         "Missing tokenizer-build deps: %s\n"
         "Install with:  pip install -e '.[tokenizer-build]'\n" % ", ".join(missing)
     )
     sys.exit(1)
-print("tokenizers + datasets available")
+print("build deps available: " + ", ".join(required))
 PY
 
 # ---------------------------------------------------------------------------
