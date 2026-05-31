@@ -41,10 +41,12 @@ class GeneralBPEModel:
     def minimal(cls) -> "GeneralBPEModel":
         """A merge-free byte-level model (256 byte tokens, full coverage).
 
-        Used as a dependency-free, training-free fallback. It is lossless but
-        uncompressed (one token per byte); real runs train a model with merges.
+        Used as a training-free fallback. It still requires the ``tokenizers``
+        package (it builds a real ``tokenizers`` byte-level model), but needs no
+        training corpus or merges. It is lossless but uncompressed (one token
+        per byte); real runs train a model with merges.
         """
-        tokenizers = _require_tokenizers()
+        _require_tokenizers()
         from tokenizers import Tokenizer, decoders, models, pre_tokenizers
 
         alphabet = pre_tokenizers.ByteLevel.alphabet()
@@ -58,7 +60,7 @@ class GeneralBPEModel:
 
     @classmethod
     def load(cls, path: str) -> "GeneralBPEModel":
-        tokenizers = _require_tokenizers()
+        _require_tokenizers()
         from tokenizers import Tokenizer
 
         return cls(Tokenizer.from_file(path))
