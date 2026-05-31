@@ -447,6 +447,127 @@ class RDTForCausalLM(nn.Module):
                     module.weight[module.padding_idx].zero_()
 
     @torch.no_grad()
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int = 64,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+        greedy: bool = False,
+        eos_id: int | None = None,
+        pad_id: int | None = None,
+        repetition_penalty: float = 1.0,
+    ) -> torch.Tensor:
+        """Autoregressively continue ``input_ids`` (``[B, L]``) with sampling.
+
+        Correct, cache-free decoding: each step re-runs ``forward`` on the
+        running prefix and samples from the final-position logits. This is
+        O(L^2) but matches training semantics exactly (word_pos/morph_depth are
+        recomputed from ids by ``forward``); a KV/Mamba-state cache can replace
+        the re-encode later without changing outputs.
+
+        Returns the full sequence ``[B, L + n]`` where ``n <= max_new_tokens``.
+        Generation stops early for a row once it emits ``eos_id`` (subsequent
+        positions are filled with ``pad_id``).
+        """
+
+        if input_ids.dim() != 2:
+            raise ValueError("input_ids must have shape [B, L]")
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        if temperature <= 0:
+            raise ValueError("temperature must be positive")
+        if top_k is not None and top_k <= 0:
+            raise ValueError("top_k must be positive when set")
+        if top_p is not None and not (0.0 < top_p <= 1.0):
+            raise ValueError("top_p must be in (0, 1] when set")
+        if repetition_penalty <= 0:
+            raise ValueError("repetition_penalty must be positive")
+
+        cfg = self.cfg
+        eos_id = cfg.eos_id if eos_id is None else eos_id
+        pad_id = cfg.pad_id if pad_id is None else pad_id
+
+        was_training = self.training
+        self.eval()
+
+        seq = input_ids
+        device = seq.device
+        finished = torch.zeros(seq.shape[0], dtype=torch.bool, device=device)
+
+        try:
+            for _ in range(max_new_tokens):
+                window = seq
+                if window.shape[1] > cfg.max_seq_len:
+                    window = window[:, -cfg.max_seq_len:]
+
+                out = self.forward(window, return_logits=True)
+                logits = out["logits"][:, -1, :].float()
+
+                if repetition_penalty != 1.0:
+                    logits = self._apply_repetition_penalty(
+                        logits, seq, repetition_penalty
+                    )
+
+                if greedy:
+                    next_token = torch.argmax(logits, dim=-1)
+                else:
+                    logits = logits / temperature
+                    logits = self._filter_logits(logits, top_k, top_p)
+                    probs = F.softmax(logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
+
+                next_token = torch.where(
+                    finished, torch.full_like(next_token, pad_id), next_token
+                )
+                seq = torch.cat([seq, next_token.unsqueeze(1)], dim=1)
+                finished = finished | (next_token == eos_id)
+                if bool(finished.all()):
+                    break
+        finally:
+            if was_training:
+                self.train()
+
+        return seq
+
+    @staticmethod
+    def _apply_repetition_penalty(
+        logits: torch.Tensor, seq: torch.Tensor, penalty: float
+    ) -> torch.Tensor:
+        """Divide logits of already-seen tokens by ``penalty`` (CTRL-style)."""
+
+        for row in range(seq.shape[0]):
+            seen = torch.unique(seq[row])
+            row_logits = logits[row, seen]
+            logits[row, seen] = torch.where(
+                row_logits > 0, row_logits / penalty, row_logits * penalty
+            )
+        return logits
+
+    @staticmethod
+    def _filter_logits(
+        logits: torch.Tensor, top_k: int | None, top_p: float | None
+    ) -> torch.Tensor:
+        """Apply top-k then nucleus (top-p) masking to a ``[B, V]`` logit row."""
+
+        if top_k is not None:
+            k = min(top_k, logits.shape[-1])
+            kth = torch.topk(logits, k, dim=-1).values[:, -1, None]
+            logits = logits.masked_fill(logits < kth, float("-inf"))
+
+        if top_p is not None:
+            sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
+            cum_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            remove = cum_probs > top_p
+            remove[:, 1:] = remove[:, :-1].clone()
+            remove[:, 0] = False
+            remove_idx = remove.scatter(1, sorted_idx, remove)
+            logits = logits.masked_fill(remove_idx, float("-inf"))
+
+        return logits
+
     def count_params(self, trainable_only: bool = False) -> int:
         seen: set[int] = set()
         total = 0
