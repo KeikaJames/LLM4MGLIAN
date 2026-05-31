@@ -33,7 +33,7 @@ cd "$ROOT"
 export PYTHONPATH="${PYTHONPATH:-$ROOT}"
 
 SMOKE="${SMOKE:-0}"
-WORK="${WORK:-$ROOT/outputs/pretrain_e2e}"
+WORK_DEFAULT="$ROOT/outputs/pretrain_e2e"
 WIKI_LANGS="${WIKI_LANGS:-en ja zh mn}"
 WIKI_LIMIT="${WIKI_LIMIT:-20000}"
 MORPHBPE_VOCAB="${MORPHBPE_VOCAB:-24000}"
@@ -41,18 +41,25 @@ GENERAL_VOCAB="${GENERAL_VOCAB:-40000}"
 MAX_LENGTH="${MAX_LENGTH:-2048}"
 CONFIG="${CONFIG:-two_stage_pretrain}"
 MAX_STEPS="${MAX_STEPS:-100000}"
+PRECISION="${PRECISION:-bf16}"
+MAMBA="${MAMBA:-auto}"
 TRAIN_ARGS="${TRAIN_ARGS:-}"
 
 if [ "$SMOKE" = "1" ]; then
     # Tiny, fast, dependency-light defaults for the local self-test.
-    WORK="${WORK:-$ROOT/outputs/pretrain_e2e_smoke}"
+    WORK_DEFAULT="$ROOT/outputs/pretrain_e2e_smoke"
     MORPHBPE_VOCAB=400
     GENERAL_VOCAB=500
     MAX_LENGTH=128
     CONFIG="two_stage_tiny"
     MAX_STEPS=2
     WIKI_LANGS=""
+    PRECISION="fp32"
+    MAMBA="naive"
 fi
+
+# Honor an externally provided WORK; otherwise use the mode-specific default.
+WORK="${WORK:-$WORK_DEFAULT}"
 
 CORPUS_DIR="$WORK/corpus"
 TOK_DIR="$WORK/tokenizer"
@@ -193,7 +200,8 @@ python3 -m scripts.train_rdt \
     --data "$DATA_DIR" \
     --seq-len "$MAX_LENGTH" \
     --max-steps "$MAX_STEPS" \
-    --precision fp32 \
+    --precision "$PRECISION" \
+    --mamba "$MAMBA" \
     --output "$RUN_DIR" \
     $TRAIN_ARGS
 
